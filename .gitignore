@@ -30,6 +30,7 @@ android/captures/
 android/app/build/
 android/app/google-services.json
 firebase/google-services.json
+lib/firebase_options.dart
 android/key.properties
 **/*.keystore
 **/*.jks
