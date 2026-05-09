@@ -1,0 +1,12 @@
+torch
+transformers
+trl
+unsloth
+pillow
+accelerate
+bitsandbytes
+xformers
+wandb
+fastapi
+uvicorn
+python-multipart

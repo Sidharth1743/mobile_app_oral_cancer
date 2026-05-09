@@ -1,0 +1,1 @@
+{"visitId":"ehr-04","patientHash":"patient-hash","createdAt":"2026-04-03T00:00:00.000Z","siteMeasurements":[{"siteId":"left_buccal","siteLabel":"Left buccal mucosa","lesionSizeMm":3.6,"riskLevel":"medium","recordedAt":"2026-04-03T00:00:00.000Z","roiImagePath":"ehr/04-left.jpg","maskPath":"ehr/04-left-mask.png"}],"doctorSummary":"Stable lesion noted.","finalOutcome":"follow_up"}

@@ -1,0 +1,79 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function active() {
+      return signedIn() && userDoc().data.active == true;
+    }
+
+    function role() {
+      return active() ? userDoc().data.role : null;
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    function isAsha() {
+      return role() == 'asha';
+    }
+
+    function isDoctor() {
+      return role() == 'doctor';
+    }
+
+    function caseDoc(caseId) {
+      return firestore.get(/databases/(default)/documents/cases/$(caseId));
+    }
+
+    function isCaseAsha(caseId) {
+      return isAsha() && caseDoc(caseId).data.createdByUid == request.auth.uid;
+    }
+
+    function isCaseDoctor(caseId) {
+      return isDoctor() && caseDoc(caseId).data.assignedDoctorUid == request.auth.uid;
+    }
+
+    function validImageSize() {
+      return request.resource.size < 10 * 1024 * 1024;
+    }
+
+    match /cases/{caseId}/{visitId}/roi/{fileName} {
+      allow read: if isAdmin() || isCaseAsha(caseId) || isCaseDoctor(caseId);
+      allow write: if (isAdmin() || isCaseAsha(caseId))
+        && request.resource.contentType == 'image/jpeg'
+        && validImageSize();
+    }
+
+    match /cases/{caseId}/{visitId}/masks/{fileName} {
+      allow read: if isAdmin() || isCaseAsha(caseId) || isCaseDoctor(caseId);
+      allow write: if (isAdmin() || isCaseAsha(caseId))
+        && request.resource.contentType == 'image/png'
+        && validImageSize();
+    }
+
+    match /cases/{caseId}/{visitId}/frames/{fileName} {
+      allow read: if isAdmin() || isCaseAsha(caseId) || isCaseDoctor(caseId);
+      allow write: if (isAdmin() || isCaseAsha(caseId))
+        && request.resource.contentType == 'image/jpeg'
+        && validImageSize();
+    }
+
+    match /research/exports/{fileName} {
+      allow read: if isAdmin() || role() == 'research';
+      allow write: if isAdmin();
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

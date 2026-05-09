@@ -1,0 +1,13 @@
+{
+  "name": "oral-cancer-firebase-rules-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:rules": "firebase emulators:exec --only firestore,storage \"node --test firebase-emulator-tests/*.test.mjs\"",
+    "test:functions": "node --test functions/test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.6.0"
+  }
+}

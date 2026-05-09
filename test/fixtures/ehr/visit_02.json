@@ -1,0 +1,1 @@
+{"visitId":"ehr-02","patientHash":"patient-hash","createdAt":"2026-04-17T00:00:00.000Z","siteMeasurements":[{"siteId":"left_buccal","siteLabel":"Left buccal mucosa","lesionSizeMm":4.5,"riskLevel":"medium","recordedAt":"2026-04-17T00:00:00.000Z","roiImagePath":"ehr/02-left.jpg","maskPath":"ehr/02-left-mask.png"}],"doctorSummary":"Slight patch seen.","finalOutcome":"follow_up"}

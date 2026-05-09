@@ -1,0 +1,73 @@
+{
+  "visitId": "demo-visit-2026-05-03",
+  "patientHash": "9ed90f6a458bd18ac1bb0d4f4ccf3f655ab2ba79d2ee104f87cdd0e86a7f2a5c",
+  "createdAt": "2026-05-03T08:30:00.000Z",
+  "siteResults": [
+    {
+      "siteId": "left_buccal",
+      "siteLabel": "Left buccal mucosa",
+      "suspicionScore": 0.86,
+      "findings": "Non-healing mixed red-white patch with irregular margins and contact bleeding concern.",
+      "roiImagePath": "assets/demo/frames/left_buccal.png",
+      "uncertain": false
+    },
+    {
+      "siteId": "right_buccal",
+      "siteLabel": "Right buccal mucosa",
+      "suspicionScore": 0.34,
+      "findings": "Diffuse staining and frictional change without focal ulceration.",
+      "roiImagePath": "assets/demo/frames/right_buccal.png",
+      "uncertain": true
+    },
+    {
+      "siteId": "tongue_lateral",
+      "siteLabel": "Lateral tongue",
+      "suspicionScore": 0.62,
+      "findings": "Small keratotic area requiring rescreen and comparison with prior visit.",
+      "roiImagePath": "assets/demo/frames/tongue.png",
+      "uncertain": true
+    },
+    {
+      "siteId": "palate",
+      "siteLabel": "Hard palate",
+      "suspicionScore": 0.12,
+      "findings": "No focal suspicious lesion visible in selected frame.",
+      "roiImagePath": "assets/demo/frames/palate.png",
+      "uncertain": false
+    }
+  ],
+  "hypotheses": [
+    {
+      "label": "Potentially malignant oral disorder",
+      "probability": 0.74,
+      "rationale": "High-risk smokeless tobacco exposure plus red-white left buccal lesion and interval growth."
+    },
+    {
+      "label": "Traumatic keratosis or frictional lesion",
+      "probability": 0.18,
+      "rationale": "Some white plaque features may be friction-related, but growth and erythema keep concern elevated."
+    },
+    {
+      "label": "Inflammatory ulcer",
+      "probability": 0.08,
+      "rationale": "Inflammation remains possible but persistence and habit history make referral appropriate."
+    }
+  ],
+  "delta": {
+    "summary": "Left buccal lesion grew 4mm since previous visit.",
+    "sizeChangeMm": 4.0,
+    "concernIncreased": true
+  },
+  "carePlan": {
+    "action": "see_doctor_free",
+    "patientMessage": "Please visit the free doctor camp this week. The ASHA will help with the referral.",
+    "ashaMessage": "Prioritize referral. Prepare anonymized package with left buccal ROI, interval-growth note, and risk history.",
+    "rescreenDate": "2026-05-10T00:00:00.000Z",
+    "doctorBrief": "Anonymized screening visit: high-risk smokeless tobacco exposure, left buccal red-white lesion, 4mm interval growth, referral recommended."
+  },
+  "thinking": "The assessment weighs visible lesion morphology, TSNA-weighted chewing exposure, uncertainty at secondary sites, and documented interval growth.",
+  "citations": [
+    "WHO oral cancer prevention and early detection guidance",
+    "IARC smokeless tobacco carcinogenicity monograph"
+  ]
+}

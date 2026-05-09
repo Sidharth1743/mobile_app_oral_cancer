@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oral Gemma Local Test</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Oral Gemma local test</h1>
+          <p id="modelStatus" class="mutedText">Checking backend</p>
+        </div>
+        <button id="refreshStatus" type="button" class="secondaryButton">Refresh</button>
+      </header>
+
+      <section class="statusGrid" aria-label="Backend status">
+        <div class="statusItem">
+          <span class="statusLabel">Adapter</span>
+          <strong id="adapterState">Pending</strong>
+        </div>
+        <div class="statusItem">
+          <span class="statusLabel">Runtime</span>
+          <strong id="runtimeState">Pending</strong>
+        </div>
+        <div class="statusItem">
+          <span class="statusLabel">Device</span>
+          <strong id="deviceState">Pending</strong>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <form id="uploadForm" class="panel">
+          <div class="panelHeader">
+            <div>
+              <h2>Image input</h2>
+              <p class="mutedText">Use a cropped oral mucosal image.</p>
+            </div>
+            <button id="analyzeButton" type="submit" disabled>Analyze</button>
+          </div>
+
+          <label class="dropzone" for="imageInput">
+            <input id="imageInput" name="file" type="file" accept="image/*" />
+            <span id="dropText">Choose image</span>
+          </label>
+
+          <div class="previewFrame">
+            <img id="previewImage" alt="Selected oral crop preview" />
+            <p id="emptyPreview" class="emptyText">No image selected</p>
+          </div>
+        </form>
+
+        <section class="panel resultPanel" aria-live="polite">
+          <div class="panelHeader">
+            <div>
+              <h2>Model result</h2>
+              <p class="mutedText">The backend accepts only strict JSON.</p>
+            </div>
+            <span id="categoryBadge" class="badge muted">No result</span>
+          </div>
+
+          <dl class="resultList">
+            <div>
+              <dt>Recommendation</dt>
+              <dd id="recommendation">No result yet.</dd>
+            </div>
+            <div>
+              <dt>Brief reason</dt>
+              <dd id="briefReason">No result yet.</dd>
+            </div>
+            <div>
+              <dt>Disclaimer</dt>
+              <dd id="disclaimer">No result yet.</dd>
+            </div>
+          </dl>
+
+          <details class="rawBlock">
+            <summary>Raw model output</summary>
+            <pre id="rawOutput"></pre>
+          </details>
+
+          <div id="errorBox" class="errorBox" hidden></div>
+        </section>
+      </section>
+
+      <section class="panel filePanel">
+        <div class="panelHeader">
+          <div>
+            <h2>Model files</h2>
+            <p id="modelPath" class="mutedText">Waiting for status.</p>
+          </div>
+        </div>
+        <div id="fileList" class="fileList"></div>
+      </section>
+    </main>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

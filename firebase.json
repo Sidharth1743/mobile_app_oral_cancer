@@ -1,0 +1,31 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs22"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "oral-cancer-e8a6e",
+          "appId": "1:738123884911:android:63fdb1f48a31497d14a09a",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "oral-cancer-e8a6e",
+          "configurations": {
+            "android": "1:738123884911:android:63fdb1f48a31497d14a09a"
+          }
+        }
+      }
+    }
+  }
+}

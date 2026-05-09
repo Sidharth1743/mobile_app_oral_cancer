@@ -1,0 +1,141 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return signedIn() ? userDoc().data.role : null;
+    }
+
+    function active() {
+      return signedIn() && userDoc().data.active == true;
+    }
+
+    function isAdmin() {
+      return active() && role() == 'admin';
+    }
+
+    function isAsha() {
+      return active() && role() == 'asha';
+    }
+
+    function isDoctor() {
+      return active() && role() == 'doctor';
+    }
+
+    function isNgoCsr() {
+      return active() && role() == 'ngo_csr';
+    }
+
+    function isResearch() {
+      return active() && role() == 'research';
+    }
+
+    function isCaseAsha(caseData) {
+      return isAsha() && caseData.createdByUid == request.auth.uid;
+    }
+
+    function isCaseDoctor(caseData) {
+      return isDoctor() && caseData.assignedDoctorUid == request.auth.uid;
+    }
+
+    function directIdentityKeys() {
+      return ['fullName', 'phone', 'dateOfBirth', 'dob', 'pinCode', 'village'];
+    }
+
+    function hasNoDirectIdentity(data) {
+      return !data.keys().hasAny(directIdentityKeys());
+    }
+
+    match /users/{uid} {
+      allow read: if active() && (request.auth.uid == uid || isAdmin());
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /cases/{caseId} {
+      allow read: if isAdmin() || isCaseAsha(resource.data) || isCaseDoctor(resource.data);
+      allow create: if isAdmin() || (isAsha() && request.resource.data.createdByUid == request.auth.uid && hasNoDirectIdentity(request.resource.data));
+      allow update: if isAdmin() || (isCaseAsha(resource.data) && hasNoDirectIdentity(request.resource.data));
+      allow delete: if isAdmin();
+
+      match /private/patientIdentity {
+        allow read: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow write: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data);
+      }
+
+      match /consents/{consentId} {
+        allow read: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow create: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow update, delete: if false;
+      }
+
+      match /screenings/{visitId} {
+        allow read: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow write: if isAdmin()
+          || (isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+              && hasNoDirectIdentity(request.resource.data));
+      }
+
+      match /doctorPackages/{packageId} {
+        allow read: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow write: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data);
+      }
+
+      match /storageObjects/{objectId} {
+        allow read: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow write: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data);
+      }
+
+      match /treatment/{eventId} {
+        allow read: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow create: if isAdmin()
+          || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /dashboardAggregates/{document=**} {
+      allow read: if isAdmin() || isNgoCsr();
+      allow write: if isAdmin();
+    }
+
+    match /researchExports/{exportId} {
+      allow read, create: if isAdmin() || isResearch();
+      allow update, delete: if isAdmin();
+    }
+
+    match /auditEvents/{eventId} {
+      allow read: if isAdmin();
+      allow create: if active();
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,91 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+.codex
+
+# Logs and local run output
+*.log
+*.tmp
+*.temp
+firestore-debug.log
+ui-debug.log
+firebase-debug.log
+convert*.log
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+
+# Android local/generated files
+android/.gradle/
+android/local.properties
+android/captures/
+android/app/build/
+android/app/google-services.json
+firebase/google-services.json
+android/key.properties
+**/*.keystore
+**/*.jks
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+wheels/
+*.egg-info/
+
+# Node / Firebase
+node_modules/
+functions/node_modules/
+.firebase/
+firebase-export-*/
+*-debug.log
+
+# Local model artifacts
+model/
+*.litertlm
+*.tflite
+*.task
+*.safetensors
+*.gguf
+*.onnx
+*.pt
+*.pth
+*.bin
+*.xnnpack_cache_*
+
+# Training datasets and generated ML outputs
+Multi-OSCCPI-Dataset/
+train/
+dataset/
+data_v2_describe/
+oral_gemma_finetune_package/.venv/
+oral_gemma_finetune_package/data/
+oral_gemma_finetune_package/data_*/
+oral_gemma_finetune_package/model/
+oral_gemma_finetune_package/images/
+oral_gemma_finetune_package/outputs/
+oral_gemma_finetune_package/wandb/
+oral_gemma_finetune_package/unsloth_compiled_cache/
+unsloth_compiled_cache/
+aws_upload/
+unsloth_training_example/gemma-unsloth-e2b/
+
+# Keep source scripts/docs inside the fine-tune package, but not generated caches
+!oral_gemma_finetune_package/*.py
+!oral_gemma_finetune_package/README.md
+!oral_gemma_finetune_package/tests/
+!oral_gemma_finetune_package/tests/**/*.py

@@ -1,0 +1,21 @@
+{
+  "visitId": "demo-visit-2026-04-03",
+  "patientHash": "9ed90f6a458bd18ac1bb0d4f4ccf3f655ab2ba79d2ee104f87cdd0e86a7f2a5c",
+  "createdAt": "2026-04-03T08:30:00.000Z",
+  "siteMeasurements": [
+    {
+      "siteId": "left_buccal",
+      "siteLabel": "Left buccal mucosa",
+      "largestDiameterMm": 9.0,
+      "imagePath": "assets/demo/frames/left_buccal.png"
+    }
+  ],
+  "riskSummary": {
+    "ageBand": "48-57",
+    "pinPrefix": "600",
+    "tobaccoBrand": "Hans",
+    "chewsPerDay": 8,
+    "yearsUsed": 20,
+    "cei": 0.27
+  }
+}
