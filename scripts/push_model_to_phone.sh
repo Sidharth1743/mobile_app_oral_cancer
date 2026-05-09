@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL_NAME="gemma-4-E2B-it.litertlm"
+MODEL_NAME="${MODEL_NAME:-gemma-4-E2B-it.litertlm}"
 LOCAL_MODEL="$PROJECT_ROOT/model/$MODEL_NAME"
 PACKAGE_ID="com.example.oral_cancer"
 PHONE_MODEL_DIR="/sdcard/Android/data/$PACKAGE_ID/files/models"
