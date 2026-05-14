@@ -3,6 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
+RUN_ID="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="${LOG_FILE:-$LOG_DIR/convert_unsloth_lora_to_litert-$RUN_ID.log}"
+
+mkdir -p "$LOG_DIR"
+if [[ "${NO_PROCESS_LOG:-0}" != "1" ]]; then
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+echo "[$(date -Iseconds)] [convert] start"
+echo "[$(date -Iseconds)] [convert] log_file=$LOG_FILE"
 
 MODEL_DIR="${MODEL_DIR:-$ROOT_DIR/oral_gemma_finetune_package/outputs/no-vision-lora-15ep}"
 MERGED_DIR="${MERGED_DIR:-$ROOT_DIR/oral_gemma_finetune_package/outputs/no-vision-lora-15ep-merged}"
@@ -47,12 +57,14 @@ if [[ "$EXPORT_VISION_ENCODER" == "1" ]]; then
 fi
 
 if [[ "$SKIP_CONVERT" == "1" ]]; then
+  echo "[$(date -Iseconds)] [convert] mode=merge_only"
   "$PYTHON_BIN" "$ROOT_DIR/scripts/convert_unsloth_lora_to_litert.py" \
     --model-dir "$MODEL_DIR" \
     --merged-dir "$MERGED_DIR" \
     "${SKIP_MERGE_ARGS[@]}" \
     --skip-convert
 else
+  echo "[$(date -Iseconds)] [convert] mode=merge_and_convert export_task=$EXPORT_TASK quantize=$QUANTIZE prefill=$PREFILL_SEQ_LEN cache=$KV_CACHE_MAX_LEN"
   "$PYTHON_BIN" "$ROOT_DIR/scripts/convert_unsloth_lora_to_litert.py" \
     --model-dir "$MODEL_DIR" \
     --merged-dir "$MERGED_DIR" \
@@ -69,3 +81,4 @@ else
     "${SKIP_MERGE_ARGS[@]}" \
     --quantize "$QUANTIZE"
 fi
+echo "[$(date -Iseconds)] [convert] end"

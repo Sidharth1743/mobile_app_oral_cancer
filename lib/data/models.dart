@@ -184,12 +184,12 @@ class LesionSiteResult {
 
   factory LesionSiteResult.fromJson(Map<String, Object?> json) =>
       LesionSiteResult(
-        siteId: json['siteId'] as String,
-        siteLabel: json['siteLabel'] as String,
-        suspicionScore: (json['suspicionScore'] as num).toDouble(),
-        findings: json['findings'] as String,
+        siteId: _requiredString(json, 'siteId'),
+        siteLabel: _requiredString(json, 'siteLabel'),
+        suspicionScore: _requiredDouble(json, 'suspicionScore'),
+        findings: _requiredString(json, 'findings'),
         roiImagePath: json['roiImagePath'] as String?,
-        uncertain: json['uncertain'] as bool,
+        uncertain: _requiredBool(json, 'uncertain'),
       );
 }
 
@@ -212,9 +212,9 @@ class HypothesisResult {
 
   factory HypothesisResult.fromJson(Map<String, Object?> json) =>
       HypothesisResult(
-        label: json['label'] as String,
-        probability: (json['probability'] as num).toDouble(),
-        rationale: json['rationale'] as String,
+        label: _requiredString(json, 'label'),
+        probability: _requiredDouble(json, 'probability'),
+        rationale: _requiredString(json, 'rationale'),
       );
 }
 
@@ -236,9 +236,9 @@ class DeltaResult {
   };
 
   factory DeltaResult.fromJson(Map<String, Object?> json) => DeltaResult(
-    summary: json['summary'] as String,
-    sizeChangeMm: (json['sizeChangeMm'] as num).toDouble(),
-    concernIncreased: json['concernIncreased'] as bool,
+    summary: _requiredString(json, 'summary'),
+    sizeChangeMm: _requiredDouble(json, 'sizeChangeMm'),
+    concernIncreased: _requiredBool(json, 'concernIncreased'),
   );
 }
 
@@ -266,12 +266,51 @@ class CarePlan {
   };
 
   factory CarePlan.fromJson(Map<String, Object?> json) => CarePlan(
-    action: json['action'] as String,
-    patientMessage: json['patientMessage'] as String,
-    ashaMessage: json['ashaMessage'] as String,
-    rescreenDate: DateTime.parse(json['rescreenDate'] as String),
-    doctorBrief: json['doctorBrief'] as String,
+    action: _requiredString(json, 'action'),
+    patientMessage: _requiredString(json, 'patientMessage'),
+    ashaMessage: _requiredString(json, 'ashaMessage'),
+    rescreenDate: DateTime.parse(_requiredString(json, 'rescreenDate')),
+    doctorBrief: _requiredString(json, 'doctorBrief'),
   );
+}
+
+String _requiredString(Map<String, Object?> json, String field) {
+  final value = json[field];
+  if (value is String && value.trim().isNotEmpty) {
+    return value.trim();
+  }
+  throw FormatException('Expected non-empty string field: $field.');
+}
+
+double _requiredDouble(Map<String, Object?> json, String field) {
+  final value = json[field];
+  if (value is num) {
+    return value.toDouble();
+  }
+  if (value is String) {
+    final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(value);
+    if (match != null) {
+      return double.parse(match.group(0)!);
+    }
+  }
+  throw FormatException('Expected numeric field: $field.');
+}
+
+bool _requiredBool(Map<String, Object?> json, String field) {
+  final value = json[field];
+  if (value is bool) {
+    return value;
+  }
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'true') {
+      return true;
+    }
+    if (normalized == 'false') {
+      return false;
+    }
+  }
+  throw FormatException('Expected boolean field: $field.');
 }
 
 class FullAssessment {
@@ -285,6 +324,7 @@ class FullAssessment {
     required this.carePlan,
     required this.thinking,
     required this.citations,
+    this.rawModelOutputs = const [],
   });
 
   final String visitId;
@@ -296,6 +336,7 @@ class FullAssessment {
   final CarePlan carePlan;
   final String thinking;
   final List<String> citations;
+  final List<String> rawModelOutputs;
 
   Map<String, Object?> toJson() => {
     'visitId': visitId,
@@ -307,6 +348,7 @@ class FullAssessment {
     'carePlan': carePlan.toJson(),
     'thinking': thinking,
     'citations': citations,
+    'rawModelOutputs': rawModelOutputs,
   };
 
   String toJsonString() => jsonEncode(toJson());
@@ -335,6 +377,9 @@ class FullAssessment {
     ),
     thinking: json['thinking'] as String,
     citations: List<String>.from(json['citations'] as List),
+    rawModelOutputs: json['rawModelOutputs'] == null
+        ? const []
+        : List<String>.from(json['rawModelOutputs'] as List),
   );
 
   factory FullAssessment.fromJsonString(String source) =>

@@ -27,14 +27,12 @@ void main() {
     final payload = _payloadFromPrompt(prompt);
 
     expect(prompt, contains('site_assessment'));
-    expect(prompt, contains('suspicionScore'));
+    expect(prompt, contains('refer_for_clinical_review'));
     expect(payload['task'], 'site_assessment');
-    final clinicalRecord = Map<String, Object?>.from(
-      payload['clinicalRecord'] as Map,
-    );
-    expect(clinicalRecord, isNot(contains('fullName')));
-    expect(clinicalRecord, isNot(contains('phone')));
-    expect(clinicalRecord, isNot(contains('dateOfBirth')));
+    expect(payload, isNot(contains('fullName')));
+    expect(payload, isNot(contains('phone')));
+    expect(payload, isNot(contains('dateOfBirth')));
+    expect(payload['requiredJsonFields'], contains('category'));
   });
 
   test('differential, delta, and care-plan prompts are strict JSON tasks', () {
@@ -90,7 +88,7 @@ void main() {
     );
     expect(_payloadFromPrompt(deltaPrompt)['task'], 'interval_change');
     expect(_payloadFromPrompt(carePlanPrompt)['task'], 'care_plan');
-    expect(carePlanPrompt, contains('Do not include identity fields'));
+    expect(carePlanPrompt, contains('No identity data'));
     expect(carePlanPrompt, contains('see_doctor_free'));
   });
 }

@@ -79,4 +79,25 @@ void main() {
     expect(json['pinPrefix'], '600');
     expect(ClinicalRecord.fromJson(json).coords?.latitude, 13.08);
   });
+
+  test('model result parsers coerce common LiteRT JSON scalar variants', () {
+    final site = LesionSiteResult.fromJson({
+      'siteId': 'left_buccal',
+      'siteLabel': 'Left buccal mucosa',
+      'suspicionScore': '0.82',
+      'findings': 'Visible white patch.',
+      'roiImagePath': 'roi.jpg',
+      'uncertain': 'false',
+    });
+    final delta = DeltaResult.fromJson({
+      'summary': 'Change noted.',
+      'sizeChangeMm': '2.5mm',
+      'concernIncreased': 'true',
+    });
+
+    expect(site.suspicionScore, 0.82);
+    expect(site.uncertain, isFalse);
+    expect(delta.sizeChangeMm, 2.5);
+    expect(delta.concernIncreased, isTrue);
+  });
 }

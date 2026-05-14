@@ -54,51 +54,86 @@ class PromptBuilders {
   String siteAssessment(SiteAssessmentPromptInput input) {
     final payload = {
       'task': 'site_assessment',
-      'site': input.frames.toJson(),
-      'clinicalRecord': input.clinicalRecord.toJson(),
-      'previousMeasurements': input.previousMeasurements,
+      'siteId': input.frames.siteId,
+      'siteLabel': input.frames.siteLabel,
       'requiredJsonFields': [
-        'siteId',
-        'siteLabel',
-        'suspicionScore',
-        'findings',
-        'roiImagePath',
-        'uncertain',
+        'category',
+        'recommendation',
+        'brief_reason',
+        'disclaimer',
       ],
+      'categories': ['low_risk_or_variation', 'refer_for_clinical_review'],
     };
-    return _prompt(
-      role:
-          'Assess one oral cavity site from selected frames and de-identified risk data.',
+    return _compactPrompt(
+      role: 'Analyze this cropped oral mucosal image.',
       payload: payload,
-      outputRule: 'Return one strict JSON object matching requiredJsonFields.',
+      outputRule:
+          'Choose exactly one category. If visible ulcer, white patch, red patch, pigmentation, irregular texture, raised area, or uncertainty exists, choose refer_for_clinical_review. Return only one compact JSON object with category, recommendation, brief_reason, disclaimer. Do not add observation/image/result keys. Do not diagnose.',
     );
   }
 
   String differentials(DifferentialPromptInput input) {
     final payload = {
       'task': 'rank_differentials',
-      'clinicalRecord': input.clinicalRecord.toJson(),
-      'siteResults': input.siteResults.map((site) => site.toJson()).toList(),
+      'risk': {
+        'ageBand': input.clinicalRecord.ageBand,
+        'gender': input.clinicalRecord.gender,
+        'chewsPerDay': input.clinicalRecord.chewsPerDay,
+        'yearsUsed': input.clinicalRecord.yearsUsed,
+        'alcoholUse': input.clinicalRecord.alcoholUse,
+        'cei': input.clinicalRecord.cei,
+      },
+      'sites': input.siteResults
+          .map(
+            (site) => {
+              'siteId': site.siteId,
+              'score': site.suspicionScore,
+              'uncertain': site.uncertain,
+            },
+          )
+          .toList(),
       'requiredJsonFields': ['hypotheses'],
     };
-    return _prompt(
-      role:
-          'Rank oral lesion differential hypotheses using de-identified data only.',
+    return _compactPrompt(
+      role: 'Rank likely differentials.',
       payload: payload,
-      outputRule:
-          'Return strict JSON with hypotheses sorted by probability descending.',
+      outputRule: 'Return JSON only. hypotheses sorted by probability desc.',
     );
   }
 
   String carePlan(CarePlanPromptInput input) {
     final payload = {
       'task': 'care_plan',
-      'clinicalRecord': input.clinicalRecord.toJson(),
-      'siteResults': input.siteResults.map((site) => site.toJson()).toList(),
-      'hypotheses': input.hypotheses
-          .map((hypothesis) => hypothesis.toJson())
+      'risk': {
+        'ageBand': input.clinicalRecord.ageBand,
+        'gender': input.clinicalRecord.gender,
+        'chewsPerDay': input.clinicalRecord.chewsPerDay,
+        'yearsUsed': input.clinicalRecord.yearsUsed,
+        'alcoholUse': input.clinicalRecord.alcoholUse,
+        'cei': input.clinicalRecord.cei,
+      },
+      'sites': input.siteResults
+          .map(
+            (site) => {
+              'siteId': site.siteId,
+              'score': site.suspicionScore,
+              'uncertain': site.uncertain,
+            },
+          )
           .toList(),
-      'delta': input.delta.toJson(),
+      'hypotheses': input.hypotheses
+          .take(3)
+          .map(
+            (hypothesis) => {
+              'label': hypothesis.label,
+              'probability': hypothesis.probability,
+            },
+          )
+          .toList(),
+      'delta': {
+        'sizeChangeMm': input.delta.sizeChangeMm,
+        'concernIncreased': input.delta.concernIncreased,
+      },
       'allowedActions': [
         'reassure',
         'rescreen',
@@ -113,42 +148,53 @@ class PromptBuilders {
         'doctorBrief',
       ],
     };
-    return _prompt(
-      role:
-          'Create patient, ASHA, and doctor outputs for an oral cancer screening visit.',
+    return _compactPrompt(
+      role: 'Create care plan.',
       payload: payload,
-      outputRule:
-          'Return strict JSON for the care plan. Do not include identity fields.',
+      outputRule: 'Return JSON only. Messages concise. No identity fields.',
     );
   }
 
   String delta(DeltaPromptInput input) {
     final payload = {
       'task': 'interval_change',
-      'currentSiteResults': input.currentSiteResults
-          .map((site) => site.toJson())
+      'sites': input.currentSiteResults
+          .map(
+            (site) => {
+              'siteId': site.siteId,
+              'score': site.suspicionScore,
+              'uncertain': site.uncertain,
+            },
+          )
           .toList(),
-      'previousMeasurements': input.previousMeasurements,
+      'previous': input.previousMeasurements
+          .map(
+            (entry) => {
+              'siteId': entry['siteId'],
+              'sizeMm': entry['sizeMm'],
+              'score': entry['suspicionScore'],
+            },
+          )
+          .toList(),
       'requiredJsonFields': ['summary', 'sizeChangeMm', 'concernIncreased'],
     };
-    return _prompt(
-      role:
-          'Compare current screening findings with previous de-identified measurements.',
+    return _compactPrompt(
+      role: 'Compare interval change.',
       payload: payload,
-      outputRule: 'Return strict JSON describing interval change.',
+      outputRule: 'Return JSON only.',
     );
   }
 
-  String _prompt({
+  String _compactPrompt({
     required String role,
     required Map<String, Object?> payload,
     required String outputRule,
   }) {
     return [
-      'You are an on-device oral cancer screening assistant for an ASHA workflow.',
+      'You are oral screening assistant.',
       role,
-      'Use only the de-identified JSON payload below.',
-      'Never request, infer, or emit patient name, phone number, exact DOB, or full PIN code.',
+      'Use payload only.',
+      'No identity data.',
       outputRule,
       jsonEncode(payload),
     ].join('\n\n');

@@ -891,3 +891,5 @@ MODEL_DIR=oral_gemma_finetune_package/outputs/no-vision-lora-15ep \
  LIGHTWEIGHT_CONVERSION=1 \
  SINGLE_TOKEN_EMBEDDER=1 \
  ./scripts/convert_unsloth_lora_to_litert.sh > convert-no-vision-rerun.log 2>&1
+
+watch -n 2 'free -h; echo; tail -n 20 convert.log'

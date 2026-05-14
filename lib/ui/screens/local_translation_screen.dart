@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../inference/litert_gemma_service.dart';
+import '../../inference/gemma_service_factory.dart';
 import '../../translation/local_translation_service.dart';
 import '../components/section_panel.dart';
 
@@ -52,7 +52,7 @@ class _LocalTranslationScreenState extends State<LocalTranslationScreen> {
         throw StateError('LiteRT model path is required.');
       }
       final service = LocalGemmaTranslationService(
-        gemmaService: LiteRtGemmaService(modelPath: modelPath),
+        gemmaService: GemmaServiceFactory.create(modelPath: modelPath),
       );
       final result = await service.translate(
         TranslationRequest(text: _text.text, targetLanguage: _language),

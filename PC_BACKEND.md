@@ -121,6 +121,37 @@ ORAL_GEMMA_MODEL_DIR=oral_gemma_finetune_package/outputs/no-vision-lora-15ep-mer
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
+## Run Local LiteRT Helper For Desktop App
+
+The Flutter desktop flow can call a local helper that runs the real LiteRT model:
+
+```bash
+PYTHON_BIN=.venv/bin/python \
+MODEL_PATH=model/gemma-4-E2B-it-final.litertlm \
+PORT=8010 \
+./scripts/run_pc_litert_helper.sh
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8010/health
+```
+
+Desktop Flutter run (app calls helper by default on non-Android platforms):
+
+```bash
+flutter run -d linux --dart-define=LITERT_MODEL_PATH=model/gemma-4-E2B-it-final.litertlm
+```
+
+Optional helper URL override:
+
+```bash
+flutter run -d linux \
+  --dart-define=LITERT_MODEL_PATH=model/gemma-4-E2B-it-final.litertlm \
+  --dart-define=PC_LITERT_HELPER_URL=http://127.0.0.1:8010
+```
+
 ## API Endpoints
 
 Status:
