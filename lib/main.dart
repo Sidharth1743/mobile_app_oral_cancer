@@ -518,7 +518,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
         '[OralCancerPipeline] analyze_button_start video=$videoPath '
         'model=$modelPath yolo=$yoloModelPath',
       );
-      final maxGemmaImages = !kIsWeb && Platform.isAndroid ? 1 : 5;
+      const maxGemmaImages = 5;
       const gemmaBackend = 'cpu';
       debugPrint(
         '[OralCancerPipeline] runtime_config maxGemmaImages=$maxGemmaImages '
