@@ -78,6 +78,15 @@ class YoloPrefilter {
       rethrow;
     }
   }
+
+  Future<void> close() async {
+    try {
+      await _channel.invokeMethod<void>('close');
+      debugPrint('[OralCancerYOLO][Dart] interpreter_closed');
+    } on MissingPluginException {
+      return;
+    }
+  }
 }
 
 class GemmaInputFrame {

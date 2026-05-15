@@ -74,16 +74,21 @@ class VideoTriagePipeline {
       '${tempDir.path}/oral_cancer/$visitId/gemma_inputs',
     );
     onProgress?.call('Running YOLO prefilter');
-    final prepared =
-        await YoloGemmaInputPreparer(
-          yolo: _yoloPrefilter,
-          confidenceThreshold: 0.25,
-          cropSize: 224,
-        ).prepare(
-          framePaths: framePaths,
-          outputDirectory: gemmaInputDir,
-          maxGemmaImages: maxGemmaImages,
-        );
+    final List<GemmaInputFrame> prepared;
+    try {
+      prepared =
+          await YoloGemmaInputPreparer(
+            yolo: _yoloPrefilter,
+            confidenceThreshold: 0.25,
+            cropSize: 224,
+          ).prepare(
+            framePaths: framePaths,
+            outputDirectory: gemmaInputDir,
+            maxGemmaImages: maxGemmaImages,
+          );
+    } finally {
+      await _yoloPrefilter.close();
+    }
 
     final hasYoloCrop = prepared.any((input) => input.selection == 'yolo_crop');
     final oralFrameScores = prepared
@@ -127,31 +132,38 @@ class VideoTriagePipeline {
 
     final rawOutputs = <String>[];
     final parsedResults = <Map<String, Object?>>[];
-    for (var index = 0; index < prepared.length; index++) {
-      final input = prepared[index];
-      debugPrint(
-        '[OralCancerPipeline] gemma_frame_start index=$index '
-        'selection=${input.selection} image=${input.gemmaImagePath}',
-      );
-      onProgress?.call(
-        'Running Gemma on frame ${index + 1}/${prepared.length}',
-      );
-      final response = await _gemmaService.infer(
-        GemmaRequest(
-          prompt: oralScreeningPromptForLanguage(outputLanguage),
-          imagePaths: [input.gemmaImagePath],
-          maxTokens: 256,
-          temperature: 0,
-        ),
-      );
-      final raw = response.text;
-      rawOutputs.add('[site:video_frame_${index + 1}] $raw');
-      parsedResults.add(_parseClassifierOutput(raw));
-      debugPrint(
-        '[OralCancerPipeline] gemma_frame_done index=$index '
-        'elapsedMs=${response.elapsed.inMilliseconds} '
-        'category=${parsedResults.last['category']} rawChars=${raw.length}',
-      );
+    try {
+      for (var index = 0; index < prepared.length; index++) {
+        final input = prepared[index];
+        debugPrint(
+          '[OralCancerPipeline] gemma_frame_start index=$index '
+          'selection=${input.selection} image=${input.gemmaImagePath}',
+        );
+        onProgress?.call(
+          'Running Gemma on frame ${index + 1}/${prepared.length}',
+        );
+        final response = await _gemmaService.infer(
+          GemmaRequest(
+            prompt: oralScreeningPromptForLanguage(outputLanguage),
+            imagePaths: [input.gemmaImagePath],
+            maxTokens: 256,
+            temperature: 0,
+          ),
+        );
+        final raw = response.text;
+        rawOutputs.add('[site:video_frame_${index + 1}] $raw');
+        parsedResults.add(_parseClassifierOutput(raw));
+        debugPrint(
+          '[OralCancerPipeline] gemma_frame_done index=$index '
+          'elapsedMs=${response.elapsed.inMilliseconds} '
+          'category=${parsedResults.last['category']} rawChars=${raw.length}',
+        );
+      }
+    } finally {
+      final service = _gemmaService;
+      if (service is ReleasableGemmaService) {
+        await (service as ReleasableGemmaService).close();
+      }
     }
 
     final shouldRefer = parsedResults.any(

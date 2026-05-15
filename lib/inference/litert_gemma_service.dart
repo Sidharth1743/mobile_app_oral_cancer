@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import 'gemma_service.dart';
 
-class LiteRtGemmaService implements GemmaService {
+class LiteRtGemmaService implements GemmaService, ReleasableGemmaService {
   LiteRtGemmaService({
     required String modelPath,
     String backend = 'gpu',
@@ -54,5 +54,15 @@ class LiteRtGemmaService implements GemmaService {
       modelName: modelName is String ? modelName : 'LiteRT-LM',
       elapsed: elapsed,
     );
+  }
+
+  @override
+  Future<void> close() async {
+    try {
+      await _channel.invokeMethod<void>('close');
+      debugPrint('[OralCancerLiteRT][Dart] engine_closed');
+    } on MissingPluginException {
+      return;
+    }
   }
 }

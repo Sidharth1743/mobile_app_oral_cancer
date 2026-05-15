@@ -49,6 +49,7 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "infer" -> runLiteRtInference(call.arguments as? Map<*, *>, result)
+                "close" -> closeLiteRtEngine(result)
                 else -> result.notImplemented()
             }
         }
@@ -58,9 +59,22 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "detect" -> runYoloDetection(call.arguments as? Map<*, *>, result)
+                "close" -> closeYoloInterpreter(result)
                 else -> result.notImplemented()
             }
         }
+    }
+
+    private fun closeLiteRtEngine(result: MethodChannel.Result) {
+        synchronized(engineLock) {
+            cachedEngine?.close()
+            cachedEngine = null
+            cachedModelKey = null
+        }
+        System.gc()
+        Log.i("OralCancerLiteRT", "Engine closed")
+        logMemory("OralCancerLiteRT")
+        result.success(null)
     }
 
     private fun runLiteRtInference(args: Map<*, *>?, result: MethodChannel.Result) {
@@ -253,6 +267,18 @@ class MainActivity : FlutterActivity() {
             logMemory("OralCancerYOLO")
         }
         return cachedYolo!!
+    }
+
+    private fun closeYoloInterpreter(result: MethodChannel.Result) {
+        synchronized(yoloLock) {
+            cachedYolo?.close()
+            cachedYolo = null
+            cachedYoloPath = null
+        }
+        System.gc()
+        Log.i("OralCancerYOLO", "Interpreter closed")
+        logMemory("OralCancerYOLO")
+        result.success(null)
     }
 
     private fun loadMappedFile(path: String): MappedByteBuffer {

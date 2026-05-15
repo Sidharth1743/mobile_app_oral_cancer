@@ -18,6 +18,7 @@ import 'data/local_database.dart';
 import 'data/models.dart';
 import 'cloud/firebase_bootstrap.dart';
 import 'inference/gemma_service_factory.dart';
+import 'inference/mobile_model_paths.dart';
 import 'inference/video_triage_pipeline.dart';
 import 'inference/yolo_prefilter.dart';
 import 'intake/date_of_birth.dart';
@@ -561,6 +562,13 @@ class _CaptureScreenState extends State<CaptureScreen> {
   }
 
   Future<void> _initializeCamera() async {
+    if (_isDesktop) {
+      return;
+    }
+    final existing = _cameraController;
+    if (existing != null && existing.value.isInitialized) {
+      return;
+    }
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
       throw StateError('No camera is available on this device.');
@@ -578,10 +586,50 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() => _cameraController = controller);
   }
 
+  Future<void> _releaseCamera() async {
+    final controller = _cameraController;
+    if (controller == null) {
+      return;
+    }
+    _cameraController = null;
+    _cameraInit = Future.value();
+    if (mounted) {
+      setState(() {});
+    }
+    await controller.dispose();
+    debugPrint('[OralCancerPipeline] camera_released');
+  }
+
   Future<void> _toggleRecording() async {
+    final l10n = AppLocalizations.of(context);
+    if (!_isDesktop &&
+        (_cameraController == null ||
+            !_cameraController!.value.isInitialized)) {
+      setState(() {
+        _busy = true;
+        _error = null;
+        _progress = null;
+        _cameraInit = _initializeCamera();
+      });
+      try {
+        await _cameraInit;
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _busy = false;
+            _error = error.toString();
+          });
+        }
+        return;
+      }
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
-      setState(() => _error = AppLocalizations.of(context).cameraNotReadyError);
+      setState(() => _error = l10n.cameraNotReadyError);
       return;
     }
     setState(() {
@@ -598,11 +646,10 @@ class _CaptureScreenState extends State<CaptureScreen> {
           _videoPath = file.path;
           _recording = false;
         });
+        await _releaseCamera();
       } else {
         if (controller.value.isRecordingVideo) {
-          throw StateError(
-            AppLocalizations.of(context).stopCurrentRecordingError,
-          );
+          throw StateError(l10n.stopCurrentRecordingError);
         }
         debugPrint('[OralCancerPipeline] record_start_requested');
         await controller.startVideoRecording();
@@ -657,8 +704,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
       _progress = l10n.preparingVideosProgress;
     });
     try {
-      final modelPath = _defaultModelPath().trim();
-      final yoloModelPath = _defaultYoloModelPath().trim();
+      final modelPath = !kIsWeb && Platform.isAndroid
+          ? (await MobileModelPaths.resolveGemmaPath()).trim()
+          : _defaultModelPath().trim();
+      final yoloModelPath = !kIsWeb && Platform.isAndroid
+          ? (await MobileModelPaths.resolveYoloPath()).trim()
+          : _defaultYoloModelPath().trim();
       if (modelPath.isEmpty) {
         throw StateError(l10n.modelPathRequiredError);
       }
@@ -669,6 +720,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
       if (videoPath == null) {
         throw StateError(l10n.recordOrSelectVideoError);
       }
+      await _releaseCamera();
       debugPrint(
         '[OralCancerPipeline] analyze_button_start video=$videoPath '
         'model=$modelPath yolo=$yoloModelPath',
@@ -726,18 +778,28 @@ class _CaptureScreenState extends State<CaptureScreen> {
       if (!mounted) {
         return;
       }
-      Navigator.of(context).push(
+      await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) =>
               PatientOutputScreen(assessment: assessment, database: database),
         ),
       );
+      if (mounted && !_isDesktop) {
+        setState(() {
+          _cameraInit = _initializeCamera();
+        });
+      }
     } catch (error) {
       debugPrint(
         '[OralCancerPipeline] analyze_button_error elapsedMs=${DateTime.now().difference(analyzeStarted).inMilliseconds} '
         'error=$error',
       );
       setState(() => _error = error.toString());
+      if (!_isDesktop && mounted) {
+        setState(() {
+          _cameraInit = _initializeCamera();
+        });
+      }
     } finally {
       if (mounted) {
         setState(() {

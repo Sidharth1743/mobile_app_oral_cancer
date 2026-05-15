@@ -38,6 +38,10 @@ abstract interface class GemmaService {
   Future<GemmaRawResponse> infer(GemmaRequest request);
 }
 
+abstract interface class ReleasableGemmaService {
+  Future<void> close();
+}
+
 GemmaParsedResponse parseGemmaThinking(String rawText) {
   final match = RegExp(
     r'<think>([\s\S]*?)<\/think>',
