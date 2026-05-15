@@ -13,11 +13,16 @@ import 'yolo_prefilter.dart';
 
 const oralScreeningClassifierPrompt =
     'You are an oral screening assistant for cancer risk screening. '
-    'Analyze this oral mucosal image. If there is any visible ulcer, white patch, '
-    'red patch, pigmentation, irregular texture, raised area, or if the image is '
-    'uncertain, choose refer_for_clinical_review. Return valid JSON only with keys '
-    'category, recommendation, brief_reason, disclaimer. Categories: '
-    'low_risk_or_variation or refer_for_clinical_review. Do not diagnose.';
+    'First decide whether the image clearly shows oral cavity or oral mucosa. '
+    'If the image is not an oral-cavity image, is a household/non-medical scene, '
+    'is too blurry, too dark, badly framed, or does not contain usable oral mucosa, '
+    'choose recapture_required. Only for a usable oral mucosal image, analyze visible '
+    'ulcer, white patch, red patch, pigmentation, irregular texture, or raised area. '
+    'For usable oral images with any suspicious or uncertain mucosal finding, choose '
+    'refer_for_clinical_review. For usable oral images without a clear suspicious '
+    'finding, choose low_risk_or_variation. Return valid JSON only with keys category, '
+    'recommendation, brief_reason, disclaimer. Categories: low_risk_or_variation, '
+    'refer_for_clinical_review, or recapture_required. Do not diagnose.';
 
 String oralScreeningPromptForLanguage(String outputLanguage) {
   final language = outputLanguage.trim().isEmpty ? 'English' : outputLanguage;
@@ -152,6 +157,11 @@ class VideoTriagePipeline {
     final shouldRefer = parsedResults.any(
       (result) => result['category'] == 'refer_for_clinical_review',
     );
+    final needsRecapture =
+        !shouldRefer &&
+        parsedResults.every(
+          (result) => result['category'] == 'recapture_required',
+        );
     final reasons = parsedResults
         .map((result) => (result['brief_reason'] as String? ?? '').trim())
         .where((reason) => reason.isNotEmpty)
@@ -193,10 +203,16 @@ class VideoTriagePipeline {
       ],
       hypotheses: [
         HypothesisResult(
-          label: shouldRefer
+          label: needsRecapture
+              ? 'Recapture required'
+              : shouldRefer
               ? 'Refer for clinical review'
               : 'Low risk or normal variation',
-          probability: shouldRefer ? 0.9 : 0.2,
+          probability: needsRecapture
+              ? 1
+              : shouldRefer
+              ? 0.9
+              : 0.2,
           rationale: reasonSummary,
         ),
       ],
@@ -206,10 +222,16 @@ class VideoTriagePipeline {
         concernIncreased: false,
       ),
       carePlan: CarePlan(
-        action: shouldRefer ? 'urgent_referral' : 'routine_rescreen',
+        action: needsRecapture
+            ? 'recapture_required'
+            : shouldRefer
+            ? 'urgent_referral'
+            : 'routine_rescreen',
         patientMessage: patientMessage,
         ashaMessage: shouldRefer
             ? 'Refer this patient for clinical review. The on-device Gemma classifier flagged at least one sampled frame.'
+            : needsRecapture
+            ? 'Recapture required. Gemma did not receive a usable oral mucosa frame.'
             : 'No immediate referral was flagged by the sampled-frame classifier. Continue routine follow-up.',
         rescreenDate: _clock().add(const Duration(days: 30)),
         doctorBrief:
@@ -227,7 +249,11 @@ class VideoTriagePipeline {
       framePaths: prepared.map((item) => item.gemmaImagePath).toList(),
     );
     debugPrint(
-      '[OralCancerPipeline] analyze_done result=${shouldRefer ? 'refer' : 'low_risk'} '
+      '[OralCancerPipeline] analyze_done result=${needsRecapture
+          ? 'recapture_required'
+          : shouldRefer
+          ? 'refer'
+          : 'low_risk'} '
       'gemmaFrames=${prepared.length} elapsedMs=${DateTime.now().difference(pipelineStarted).inMilliseconds}',
     );
     return assessment;
@@ -325,7 +351,8 @@ class VideoTriagePipeline {
       final parsed = decodeJsonObject(raw);
       final category = parsed['category'];
       if (category == 'low_risk_or_variation' ||
-          category == 'refer_for_clinical_review') {
+          category == 'refer_for_clinical_review' ||
+          category == 'recapture_required') {
         return parsed;
       }
     } catch (_) {
