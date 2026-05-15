@@ -18,7 +18,7 @@ class _LocalTranslationScreenState extends State<LocalTranslationScreen> {
     text: const String.fromEnvironment(
       'LITERT_MODEL_PATH',
       defaultValue:
-          '/sdcard/Android/data/com.example.oral_cancer/files/models/gemma-4-E2B-it.litertlm',
+          '/sdcard/Android/data/com.example.oral_cancer/files/models/gemma-4-E2B-it-final.litertlm',
     ),
   );
   final _text = TextEditingController();
