@@ -14,8 +14,8 @@ import 'yolo_prefilter.dart';
 const oralScreeningClassifierPrompt =
     'You are an oral screening assistant for cancer risk screening. '
     'First decide whether the image clearly shows oral cavity or oral mucosa. '
-    'If the image is not an oral-cavity image, is a household/non-medical scene, '
-    'is too blurry, too dark, badly framed, or does not contain usable oral mucosa, '
+    'If the image is not an oral-cavity image, is too blurry, too dark, badly '
+    'framed, or does not contain usable oral mucosa, '
     'choose recapture_required. Only for a usable oral mucosal image, analyze visible '
     'ulcer, white patch, red patch, pigmentation, irregular texture, or raised area. '
     'For usable oral images with any suspicious or uncertain mucosal finding, choose '
