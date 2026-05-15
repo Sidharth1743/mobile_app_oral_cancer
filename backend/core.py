@@ -50,6 +50,17 @@ class BackendConfig:
         )
 
 
+def _find_weights_file(model_dir: Path) -> Path:
+    """Return the weights path for a model dir — handles sharded safetensors."""
+    single = model_dir / "model.safetensors"
+    if single.exists():
+        return single
+    shards = sorted(model_dir.glob("model-*-of-*.safetensors"))
+    if shards:
+        return shards[0]
+    return single  # non-existent path so the exists check fails informatively
+
+
 def adapter_config_path(adapter_dir: Path) -> Path:
     return adapter_dir / "adapter_config.json"
 
@@ -88,13 +99,13 @@ def inspect_model_files(config: BackendConfig) -> dict[str, Any]:
             "adapter_model": model_dir / "adapter_model.safetensors",
             "adapter_tokenizer": model_dir / "tokenizer.json",
             "base_config": base_model_dir / "config.json",
-            "base_model": base_model_dir / "model.safetensors",
+            "base_model": _find_weights_file(base_model_dir),
             "base_tokenizer": base_model_dir / "tokenizer.json",
         }
     else:
         files = {
             "model_config": model_dir / "config.json",
-            "model_weights": model_dir / "model.safetensors",
+            "model_weights": _find_weights_file(model_dir),
             "model_tokenizer": model_dir / "tokenizer.json",
         }
     return {
@@ -118,8 +129,13 @@ def model_files_ready(config: BackendConfig) -> bool:
 
 
 def validate_upload(content_type: str | None, size_bytes: int, max_bytes: int) -> None:
-    if content_type is None or not content_type.startswith("image/"):
-        raise ValueError("Upload must be an image file.")
+    # Relaxed for local development and various clients (e.g. Flutter desktop)
+    # that might send generic content types.
+    is_image = content_type and content_type.startswith("image/")
+    is_generic = content_type in (None, "application/octet-stream", "application/binary")
+
+    if not (is_image or is_generic):
+        raise ValueError(f"Upload must be an image file (got {content_type}).")
     if size_bytes <= 0:
         raise ValueError("Upload is empty.")
     if size_bytes > max_bytes:

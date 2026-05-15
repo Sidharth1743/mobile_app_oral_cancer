@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ class OralGemmaRuntime:
     def __init__(self, config: BackendConfig) -> None:
         self.config = config
         self._bundle: ModelBundle | None = None
+        self._lock = threading.Lock()
 
     @property
     def loaded(self) -> bool:
@@ -47,50 +49,55 @@ class OralGemmaRuntime:
         if self._bundle is not None:
             return self._bundle
 
-        status = self.status()
-        missing = [
-            name for name, item in status["files"].items() if item["exists"] is False
-        ]
-        if missing:
-            raise FileNotFoundError(f"Required model file(s) missing: {missing}")
+        with self._lock:
+            if self._bundle is not None:
+                return self._bundle
 
-        import torch
-        from unsloth import FastVisionModel, get_chat_template
+            status = self.status()
+            missing = [
+                name for name, item in status["files"].items() if item["exists"] is False
+            ]
+            if missing:
+                raise FileNotFoundError(f"Required model file(s) missing: {missing}")
 
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "CUDA is required for local Gemma inference, but no CUDA device is available."
+            import torch
+            from unsloth import FastVisionModel, get_chat_template
+
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "CUDA is required for local Gemma inference, but no CUDA device is available."
+                )
+
+            model, processor = FastVisionModel.from_pretrained(
+                model_name=str(self.config.adapter_dir),
+                load_in_4bit=True,
+                use_gradient_checkpointing="unsloth",
             )
+            processor = get_chat_template(processor, "gemma-4")
+            FastVisionModel.for_inference(model)
 
-        model, processor = FastVisionModel.from_pretrained(
-            model_name=str(self.config.adapter_dir),
-            load_in_4bit=True,
-            use_gradient_checkpointing="unsloth",
-        )
-        processor = get_chat_template(processor, "gemma-4")
-        FastVisionModel.for_inference(model)
+            self._bundle = ModelBundle(model=model, processor=processor, torch=torch)
+            return self._bundle
 
-        self._bundle = ModelBundle(model=model, processor=processor, torch=torch)
-        return self._bundle
-
-    def generate(self, image: Any) -> str:
+    def generate(self, image: Any, prompt: str | None = None) -> str:
         bundle = self.bundle()
         messages = [
             {
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": SYSTEM_INSTRUCTION},
+                    {"type": "text", "text": prompt or SYSTEM_INSTRUCTION},
                 ],
             }
         ]
         input_text = bundle.processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
+            tokenize=False,
         )
         inputs = bundle.processor(
-            image,
-            input_text,
+            images=image,
+            text=input_text,
             add_special_tokens=False,
             return_tensors="pt",
         ).to("cuda")

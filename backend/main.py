@@ -1,11 +1,13 @@
+import asyncio
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel
 
 from .core import BackendConfig, parse_model_json, python_runtime_info, validate_upload
 from .runtime import OralGemmaRuntime
@@ -71,7 +73,9 @@ def status() -> dict[str, Any]:
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
+async def analyze(
+    file: UploadFile = File(...), prompt: str = Form(None)
+) -> dict[str, Any]:
     image_bytes = await file.read()
     try:
         validate_upload(
@@ -83,7 +87,48 @@ async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    raw_text = RUNTIME.generate(image)
+    loop = asyncio.get_event_loop()
+    raw_text = await loop.run_in_executor(None, RUNTIME.generate, image, prompt)
+    parsed = parse_model_json(raw_text)
+
+    return {
+        "adapter_dir": str(CONFIG.adapter_dir),
+        "filename": file.filename,
+        "raw_text": raw_text,
+        "result": parsed,
+    }
+
+
+@app.post("/api/infer")
+async def infer(
+    file: UploadFile = File(...),
+    prompt: str = Form(None),
+    modelPath: str = Form(None),
+) -> dict[str, Any]:
+    if modelPath and modelPath.endswith(".litertlm"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This backend runs Unsloth/HF models. To use a .litertlm file, "
+                "run the LiteRT helper instead (./scripts/run_pc_litert_helper.sh) "
+                "and ensure it is listening on the port the app is calling."
+            ),
+        )
+
+    image_bytes = await file.read()
+
+    try:
+        validate_upload(
+            content_type=file.content_type,
+            size_bytes=len(image_bytes),
+            max_bytes=CONFIG.max_upload_bytes,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    loop = asyncio.get_event_loop()
+    raw_text = await loop.run_in_executor(None, RUNTIME.generate, image, prompt)
     parsed = parse_model_json(raw_text)
 
     return {

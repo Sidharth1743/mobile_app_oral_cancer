@@ -239,6 +239,15 @@ def _infer(payload: dict[str, Any]) -> dict[str, str]:
     started = time.time()
     model_path = Path(str(payload.get("modelPath") or default_model)).expanduser().resolve()
     prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        # Fallback for oral cancer screening if prompt is missing
+        prompt = (
+            "Analyze this cropped oral mucosal image. "
+            "Return JSON with: category, recommendation, brief_reason, disclaimer. "
+            "Categories: low_risk_or_variation or refer_for_clinical_review."
+        )
+        logger.warning("Prompt missing in request, using fallback: %s", prompt)
+
     backend = str(payload.get("backend") or default_backend).strip()
     image_paths = [str(path) for path in payload.get("imagePaths", [])]
     requested_max_tokens = int(payload.get("maxTokens") or 256)
@@ -248,8 +257,6 @@ def _infer(payload: dict[str, Any]) -> dict[str, str]:
         requested_max_tokens=requested_max_tokens,
         requested_temperature=requested_temperature,
     )
-    if not prompt:
-        raise ValueError("Prompt is required.")
     if not model_path.exists():
         raise ValueError(f"Model file does not exist: {model_path}")
     missing_images = [path for path in image_paths if not Path(path).expanduser().resolve().exists()]
@@ -369,9 +376,51 @@ class _Handler(BaseHTTPRequestHandler):
             _json_response(self, 404, {"error": "not_found"})
             return
         try:
+            content_type = self.headers.get("content-type", "")
             length = int(self.headers.get("content-length", "0"))
-            raw = self.rfile.read(length).decode("utf-8")
-            payload = json.loads(raw) if raw else {}
+            logger.info("POST /api/infer content_type=%s length=%d", content_type, length)
+
+            if "multipart/form-data" in content_type:
+                import cgi
+                import tempfile
+
+                # Ensure environment variables are set for cgi.FieldStorage
+                environ = {
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": content_type,
+                    "CONTENT_LENGTH": str(length),
+                }
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ=environ,
+                )
+
+                logger.info("Received multipart form fields: %s", form.keys())
+
+                payload = {
+                    "prompt": form.getfirst("prompt") or form.getfirst("fields[prompt]") or "",
+                    "modelPath": form.getfirst("modelPath") or form.getfirst("fields[modelPath]") or "",
+                    "backend": form.getfirst("backend") or "cpu",
+                    "maxTokens": form.getfirst("maxTokens") or "256",
+                    "temperature": form.getfirst("temperature") or "0",
+                }
+                # Handle uploaded file
+                if "file" in form:
+                    file_item = form["file"]
+                    if file_item.filename:
+                        suffix = Path(file_item.filename).suffix
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=suffix
+                        ) as tmp:
+                            tmp.write(file_item.file.read())
+                            payload["imagePaths"] = [tmp.name]
+                elif "imagePaths" in form:
+                    payload["imagePaths"] = form.getlist("imagePaths")
+            else:
+                raw = self.rfile.read(length).decode("utf-8")
+                payload = json.loads(raw) if raw else {}
+
             result = _infer(payload)
             _json_response(self, 200, result)
         except ValueError as exc:
@@ -379,6 +428,7 @@ class _Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError as exc:
             _json_response(self, 400, {"error": f"Invalid JSON: {exc}"})
         except Exception as exc:  # pragma: no cover
+            logger.exception("Internal error in POST handler")
             _json_response(self, 500, {"error": str(exc)})
 
     def log_message(self, _format: str, *_args: Any) -> None:

@@ -47,6 +47,7 @@ android {
 
 dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.2")
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
 }
 
 flutter {

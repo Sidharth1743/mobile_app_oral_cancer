@@ -11,14 +11,14 @@ import 'package:uuid/uuid.dart';
 
 import 'capture/frame_extractor.dart';
 import 'capture/frame_selector.dart';
-import 'capture/oral_sites.dart';
 import 'core/deidentification.dart';
 import 'core/pii_vault.dart';
 import 'data/local_database.dart';
 import 'data/models.dart';
 import 'cloud/firebase_bootstrap.dart';
-import 'inference/lesion_analyzer.dart';
 import 'inference/gemma_service_factory.dart';
+import 'inference/video_triage_pipeline.dart';
+import 'inference/yolo_prefilter.dart';
 import 'intake/date_of_birth.dart';
 import 'location/indian_locations.dart';
 import 'ui/app_home_screen.dart';
@@ -275,18 +275,21 @@ class _IntakeScreenState extends State<IntakeScreen> {
               TextFormField(
                 controller: _phone,
                 decoration: const InputDecoration(labelText: 'Phone'),
+                keyboardType: TextInputType.phone,
                 validator: _required,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _pinCode,
                 decoration: const InputDecoration(labelText: 'PIN code'),
+                keyboardType: TextInputType.number,
                 validator: _required,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _ashaPin,
                 decoration: const InputDecoration(labelText: 'ASHA PIN'),
+                keyboardType: TextInputType.number,
                 obscureText: true,
                 validator: _required,
               ),
@@ -353,9 +356,8 @@ class CaptureScreen extends StatefulWidget {
 class _CaptureScreenState extends State<CaptureScreen> {
   CameraController? _cameraController;
   Future<void>? _cameraInit;
-  final Map<String, String> _capturePaths = {};
-  late final TextEditingController _modelPathController;
-  String? _recordingSiteId;
+  String? _videoPath;
+  bool _recording = false;
   bool _busy = false;
   String? _error;
   String? _progress;
@@ -366,7 +368,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
   @override
   void initState() {
     super.initState();
-    _modelPathController = TextEditingController(text: _defaultModelPath());
     if (_isDesktop) {
       _cameraInit = Future.value();
     } else {
@@ -378,7 +379,8 @@ class _CaptureScreenState extends State<CaptureScreen> {
     if (_isDesktop) {
       return const String.fromEnvironment(
         'LITERT_MODEL_PATH',
-        defaultValue: 'model/gemma-4-E2B-it-final.litertlm',
+        defaultValue:
+            '/home/sach/gemma/organized_artifacts/models/MAIN_ours_text_ours_vision/model.litertlm',
       );
     }
     return const String.fromEnvironment(
@@ -388,10 +390,24 @@ class _CaptureScreenState extends State<CaptureScreen> {
     );
   }
 
+  String _defaultYoloModelPath() {
+    if (_isDesktop) {
+      return const String.fromEnvironment(
+        'YOLO_MODEL_PATH',
+        defaultValue:
+            '/home/sach/gemma/organized_artifacts/yolo_prefilter/YOLO11n_lesion_cropper_best_mobile_exports/yolo11n_lesion_best_640_int8.tflite',
+      );
+    }
+    return const String.fromEnvironment(
+      'YOLO_MODEL_PATH',
+      defaultValue:
+          '/sdcard/Android/data/com.example.oral_cancer/files/models/yolo11n_lesion_best_640_int8.tflite',
+    );
+  }
+
   @override
   void dispose() {
     _cameraController?.dispose();
-    _modelPathController.dispose();
     super.dispose();
   }
 
@@ -413,7 +429,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
     setState(() => _cameraController = controller);
   }
 
-  Future<void> _toggleRecording(OralSite site) async {
+  Future<void> _toggleRecording() async {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
       setState(() => _error = 'Camera is not ready.');
@@ -425,20 +441,25 @@ class _CaptureScreenState extends State<CaptureScreen> {
       _progress = null;
     });
     try {
-      if (_recordingSiteId == site.id && controller.value.isRecordingVideo) {
+      if (_recording && controller.value.isRecordingVideo) {
+        debugPrint('[OralCancerPipeline] record_stop_requested');
         final file = await controller.stopVideoRecording();
+        debugPrint('[OralCancerPipeline] record_stop_done path=${file.path}');
         setState(() {
-          _capturePaths[site.id] = file.path;
-          _recordingSiteId = null;
+          _videoPath = file.path;
+          _recording = false;
         });
       } else {
         if (controller.value.isRecordingVideo) {
-          throw StateError('Stop the current site recording first.');
+          throw StateError('Stop the current recording first.');
         }
+        debugPrint('[OralCancerPipeline] record_start_requested');
         await controller.startVideoRecording();
-        setState(() => _recordingSiteId = site.id);
+        debugPrint('[OralCancerPipeline] record_start_done');
+        setState(() => _recording = true);
       }
     } catch (error) {
+      debugPrint('[OralCancerPipeline] record_error error=$error');
       setState(() => _error = error.toString());
     } finally {
       if (mounted) {
@@ -447,108 +468,108 @@ class _CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  Future<void> _pickDesktopImage(OralSite site) async {
+  Future<void> _pickDesktopVideo() async {
+    debugPrint('[OralCancerPipeline] upload_video_picker_open');
     final file = await openFile(
       acceptedTypeGroups: const [
         XTypeGroup(
-          label: 'images',
-          extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'],
+          label: 'videos',
+          extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'],
         ),
       ],
-      confirmButtonText: 'Select image',
+      confirmButtonText: 'Select video',
     );
     if (file == null) {
-      debugPrint('Desktop image selection cancelled for ${site.id}');
+      debugPrint('[OralCancerPipeline] upload_video_picker_cancelled');
       return;
     }
     if (!File(file.path).existsSync()) {
-      setState(() => _error = 'Image does not exist: ${file.path}');
+      setState(() => _error = 'Video does not exist: ${file.path}');
       return;
     }
-    debugPrint('Desktop image selected for ${site.id}: ${file.path}');
+    debugPrint('[OralCancerPipeline] upload_video_selected path=${file.path}');
     setState(() {
-      _capturePaths[site.id] = file.path;
+      _videoPath = file.path;
       _error = null;
     });
   }
 
   Future<void> _analyze() async {
+    final analyzeStarted = DateTime.now();
     setState(() {
       _busy = true;
       _error = null;
       _progress = 'Preparing videos';
     });
     try {
-      final modelPath = _modelPathController.text.trim();
-      if (modelPath.isEmpty && !_isDesktop) {
+      final modelPath = _defaultModelPath().trim();
+      final yoloModelPath = _defaultYoloModelPath().trim();
+      if (modelPath.isEmpty) {
         throw StateError('LiteRT model path is required.');
       }
+      if (yoloModelPath.isEmpty) {
+        throw StateError('YOLO model path is required.');
+      }
+      final videoPath = _videoPath;
+      if (videoPath == null) {
+        throw StateError('Record or select one intraoral video first.');
+      }
+      debugPrint(
+        '[OralCancerPipeline] analyze_button_start video=$videoPath '
+        'model=$modelPath yolo=$yoloModelPath',
+      );
+      final maxGemmaImages = !kIsWeb && Platform.isAndroid ? 1 : 5;
+      const gemmaBackend = 'cpu';
+      debugPrint(
+        '[OralCancerPipeline] runtime_config maxGemmaImages=$maxGemmaImages '
+        'gemmaBackend=$gemmaBackend platform=${Platform.operatingSystem}',
+      );
       final visitId = const Uuid().v4();
       const extractor = FrameExtractor();
       const selector = FrameSelector();
-      final selectedSites = <CapturedSiteFrames>[];
-      if (_isDesktop) {
-        if (_capturePaths.isEmpty) {
-          throw StateError('Select at least one image for desktop analysis.');
-        }
-        final fallbackPath = _capturePaths.values.first;
-        for (final site in oralSites) {
-          final imagePath = _capturePaths[site.id] ?? fallbackPath;
-          selectedSites.add(
-            CapturedSiteFrames(
-              siteId: site.id,
-              siteLabel: site.label,
-              framePaths: [imagePath],
-              roiPath: imagePath,
-              createdAt: DateTime.now().toUtc(),
-            ),
-          );
-        }
-      } else {
-        final capturedSites = oralSites.map((site) {
-          final videoPath = _capturePaths[site.id];
-          if (videoPath == null) {
-            throw StateError('Missing video capture for ${site.label}.');
-          }
-          return MapEntry(site, videoPath);
-        }).toList();
-        for (final entry in capturedSites) {
-          debugPrint(
-            'Extracting frames for ${entry.key.id} from ${entry.value}',
-          );
-          setState(() => _progress = 'Extracting ${entry.key.label}');
-          final frames = await extractor.extractFrames(
-            videoPath: entry.value,
-            visitId: visitId,
-            siteId: entry.key.id,
-            framesPerSecond: 1,
-          );
-          debugPrint(
-            'Selecting frames for ${entry.key.id}: ${frames.length} extracted',
-          );
-          setState(() => _progress = 'Selecting ${entry.key.label}');
-          final selected = selector.selectBestFrames(frames, count: 3);
-          selectedSites.add(
-            CapturedSiteFrames(
-              siteId: entry.key.id,
-              siteLabel: entry.key.label,
-              framePaths: selected,
-              roiPath: selected.first,
-              createdAt: DateTime.now().toUtc(),
-            ),
-          );
-        }
-      }
-      final database = LocalDatabase();
-      setState(() => _progress = 'Running LiteRT assessment');
-      final analyzer = LesionAnalyzer(
-        gemmaService: GemmaServiceFactory.create(modelPath: modelPath),
-        database: database,
+      debugPrint('[OralCancerPipeline] extract_start video=$videoPath');
+      setState(() => _progress = 'Extracting video frames');
+      final frames = await extractor.extractFrames(
+        videoPath: videoPath,
+        visitId: visitId,
+        siteId: 'visit_video',
+        framesPerSecond: 1,
+        deleteSourceVideo: false,
       );
-      final assessment = await analyzer.analyze(
+      debugPrint('[OralCancerPipeline] extract_done frames=${frames.length}');
+      setState(() => _progress = 'Selecting representative frames');
+      final selected = selector.selectBestFrames(frames, count: maxGemmaImages);
+      debugPrint(
+        '[OralCancerPipeline] select_done selected=${selected.length} '
+        'paths=${selected.join('|')}',
+      );
+      final database = LocalDatabase();
+      setState(
+        () => _progress =
+            'Running YOLO + Gemma triage '
+            '($maxGemmaImages frame${maxGemmaImages == 1 ? '' : 's'})',
+      );
+      final pipeline = VideoTriagePipeline(
+        gemmaService: GemmaServiceFactory.create(
+          modelPath: modelPath,
+          backend: gemmaBackend,
+        ),
+        database: database,
+        yoloPrefilter: YoloPrefilter(modelPath: yoloModelPath),
+      );
+      final assessment = await pipeline.analyze(
         clinicalRecord: widget.clinicalRecord,
-        capturedSites: selectedSites,
-        previousMeasurements: const [],
+        framePaths: selected,
+        maxGemmaImages: maxGemmaImages,
+        onProgress: (message) {
+          if (mounted) {
+            setState(() => _progress = message);
+          }
+        },
+      );
+      debugPrint(
+        '[OralCancerPipeline] analyze_button_done action=${assessment.carePlan.action} '
+        'elapsedMs=${DateTime.now().difference(analyzeStarted).inMilliseconds}',
       );
       if (!mounted) {
         return;
@@ -560,6 +581,10 @@ class _CaptureScreenState extends State<CaptureScreen> {
         ),
       );
     } catch (error) {
+      debugPrint(
+        '[OralCancerPipeline] analyze_button_error elapsedMs=${DateTime.now().difference(analyzeStarted).inMilliseconds} '
+        'error=$error',
+      );
       setState(() => _error = error.toString());
     } finally {
       if (mounted) {
@@ -573,11 +598,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final complete = _isDesktop
-        ? _capturePaths.isNotEmpty
-        : _capturePaths.length == oralSites.length && _recordingSiteId == null;
+    final complete = _videoPath != null && !_recording;
     return Scaffold(
-      appBar: AppBar(title: Text(_isDesktop ? 'Desktop capture' : 'Capture')),
+      appBar: AppBar(title: const Text('Capture intraoral video')),
       body: FutureBuilder<void>(
         future: _cameraInit,
         builder: (context, snapshot) {
@@ -605,49 +628,61 @@ class _CaptureScreenState extends State<CaptureScreen> {
                 const Padding(
                   padding: EdgeInsets.only(bottom: 12),
                   child: Text(
-                    'Desktop mode: select one or more oral images. '
-                    'If some sites are missing, the first selected image is reused for those sites.',
+                    'Desktop mode: select one intraoral video. The app will '
+                    'sample representative frames for local screening.',
                   ),
                 ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _modelPathController,
-                decoration: const InputDecoration(
-                  labelText: 'LiteRT model path',
-                  hintText: '/sdcard/Download/model.litertlm',
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Intraoral video'),
+                      const SizedBox(height: 4),
+                      Text(
+                        _recording
+                            ? 'Recording live video'
+                            : _videoPath == null
+                            ? 'No video selected'
+                            : 'Selected: ${File(_videoPath!).uri.pathSegments.last}',
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: [
+                          if (!_isDesktop)
+                            FilledButton.icon(
+                              onPressed: _busy ? null : _toggleRecording,
+                              icon: Icon(
+                                _recording ? Icons.stop : Icons.videocam,
+                              ),
+                              label: Text(_recording ? 'Stop' : 'Record live'),
+                            ),
+                          OutlinedButton.icon(
+                            onPressed: _busy ? null : _pickDesktopVideo,
+                            icon: const Icon(Icons.upload_file),
+                            label: Text(
+                              _videoPath == null
+                                  ? 'Upload video'
+                                  : 'Change uploaded video',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 12),
-              for (final site in oralSites)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(site.label),
-                  subtitle: Text(
-                    _recordingSiteId == site.id
-                        ? 'Recording'
-                        : _capturePaths.containsKey(site.id)
-                        ? _isDesktop
-                              ? 'Image selected'
-                              : 'Video saved'
-                        : 'Pending',
-                  ),
-                  trailing: OutlinedButton(
-                    onPressed: _busy
-                        ? null
-                        : () => _isDesktop
-                              ? _pickDesktopImage(site)
-                              : _toggleRecording(site),
-                    child: Text(
-                      _isDesktop
-                          ? (_capturePaths.containsKey(site.id)
-                                ? 'Change'
-                                : 'Select')
-                          : _recordingSiteId == site.id
-                          ? 'Stop'
-                          : 'Record',
-                    ),
-                  ),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'The LiteRT model path is fixed by app configuration; no '
+                  'model selection is required during screening.',
                 ),
+              ),
               if (_error != null) ErrorText(_error!),
               if (_progress != null)
                 Padding(
@@ -807,15 +842,20 @@ class _RawModelOutputTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isReview = entry.category == 'refer_for_clinical_review';
+    final isRecapture = entry.category == 'recapture_required';
     final badgeColor = entry.category.isEmpty
         ? theme.colorScheme.outline
         : isReview
         ? Colors.red
+        : isRecapture
+        ? Colors.orange
         : Colors.teal;
     final badgeLabel = entry.category.isEmpty
         ? 'Unparsed'
         : isReview
         ? 'Review'
+        : isRecapture
+        ? 'Recapture'
         : 'Low risk';
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,

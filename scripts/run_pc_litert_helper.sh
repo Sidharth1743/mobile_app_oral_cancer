@@ -2,13 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PARENT_DIR="$(cd "$ROOT_DIR/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-$PARENT_DIR/venv/bin/python3}"
 PORT="${PORT:-8010}"
 HOST="${HOST:-127.0.0.1}"
 MODEL_PATH="${MODEL_PATH:-$ROOT_DIR/model/gemma-4-E2B-it-final.litertlm}"
 BACKEND="${BACKEND:-cpu}"
 INFER_MODE="${INFER_MODE:-cli}"
-CLI_BIN="${CLI_BIN:-$ROOT_DIR/.venv/bin/litert-lm}"
+CLI_BIN="${CLI_BIN:-$PARENT_DIR/venv/bin/litert-lm}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-180}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
 RUN_ID="$(date +%Y%m%d-%H%M%S)"

@@ -22,24 +22,26 @@ class PcLiteRtHelperService implements GemmaService {
 
   @override
   Future<GemmaRawResponse> infer(GemmaRequest request) async {
-    final modelPath = _modelPath.trim();
     final started = DateTime.now();
     final uri = Uri.parse('$_baseUrl/api/infer');
-    final payload = <String, dynamic>{
-      'backend': _backend,
-      'prompt': request.prompt,
-      'imagePaths': request.imagePaths,
-      'maxTokens': request.maxTokens,
-      'temperature': request.temperature,
-    };
-    if (modelPath.isNotEmpty) {
-      payload['modelPath'] = modelPath;
+
+    if (request.imagePaths.isEmpty) {
+      throw ArgumentError('At least one image path is required for PC infer.');
     }
-    final response = await _client.post(
-      uri,
-      headers: const {'content-type': 'application/json'},
-      body: jsonEncode(payload),
+
+    final multiRequest = http.MultipartRequest('POST', uri);
+    multiRequest.fields['prompt'] = request.prompt;
+    if (_modelPath.isNotEmpty) {
+      multiRequest.fields['modelPath'] = _modelPath;
+    }
+    multiRequest.fields['backend'] = _backend;
+    multiRequest.files.add(
+      await http.MultipartFile.fromPath('file', request.imagePaths.first),
     );
+
+    final streamedResponse = await _client.send(multiRequest);
+    final response = await http.Response.fromStream(streamedResponse);
+
     if (response.statusCode != 200) {
       throw StateError(
         'PC LiteRT helper failed (${response.statusCode}): ${response.body}',
@@ -49,13 +51,16 @@ class PcLiteRtHelperService implements GemmaService {
     if (decoded is! Map<String, dynamic>) {
       throw StateError('PC LiteRT helper returned invalid response.');
     }
-    final text = decoded['text'];
+    final text = decoded['raw_text'] ?? decoded['text'];
     if (text is! String || text.trim().isEmpty) {
       throw StateError('PC LiteRT helper returned empty text.');
     }
     return GemmaRawResponse(
       text: text,
-      modelName: decoded['modelName'] as String? ?? 'LiteRT-LM',
+      modelName:
+          decoded['adapter_dir'] as String? ??
+          decoded['modelName'] as String? ??
+          'LiteRT-LM',
       elapsed: DateTime.now().difference(started),
     );
   }
