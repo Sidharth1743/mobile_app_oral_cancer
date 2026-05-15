@@ -61,6 +61,7 @@ class OralCancerApp extends StatefulWidget {
 class _OralCancerAppState extends State<OralCancerApp> {
   Locale? _locale;
   bool _loaded = false;
+  bool _languageConfirmed = false;
 
   @override
   void initState() {
@@ -77,6 +78,7 @@ class _OralCancerAppState extends State<OralCancerApp> {
     setState(() {
       _locale = code == null ? null : Locale(code);
       _loaded = true;
+      _languageConfirmed = false;
     });
   }
 
@@ -86,7 +88,10 @@ class _OralCancerAppState extends State<OralCancerApp> {
     if (!mounted) {
       return;
     }
-    setState(() => _locale = locale);
+    setState(() {
+      _locale = locale;
+      _languageConfirmed = true;
+    });
   }
 
   @override
@@ -105,11 +110,12 @@ class _OralCancerAppState extends State<OralCancerApp> {
       ],
       home: !_loaded
           ? const _StartupLoadingScreen()
-          : _locale == null
+          : !_languageConfirmed
           ? LanguageSelectionScreen(onLocaleSelected: _setLocale)
           : AppHomeScreen(
               screening: const IntakeScreen(),
-              onChangeLanguage: () => setState(() => _locale = null),
+              onChangeLanguage: () =>
+                  setState(() => _languageConfirmed = false),
             ),
     );
   }
