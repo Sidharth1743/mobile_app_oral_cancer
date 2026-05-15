@@ -19,6 +19,13 @@ const oralScreeningClassifierPrompt =
     'category, recommendation, brief_reason, disclaimer. Categories: '
     'low_risk_or_variation or refer_for_clinical_review. Do not diagnose.';
 
+String oralScreeningPromptForLanguage(String outputLanguage) {
+  final language = outputLanguage.trim().isEmpty ? 'English' : outputLanguage;
+  return '$oralScreeningClassifierPrompt '
+      'Keep the JSON keys and category values exactly in English. '
+      'Return recommendation, brief_reason, and disclaimer values in $language.';
+}
+
 typedef VideoTriageProgress = void Function(String message);
 
 class VideoTriagePipeline {
@@ -44,6 +51,7 @@ class VideoTriagePipeline {
     required ClinicalRecord clinicalRecord,
     required List<String> framePaths,
     int maxGemmaImages = 5,
+    String outputLanguage = 'English',
     VideoTriageProgress? onProgress,
   }) async {
     if (framePaths.isEmpty) {
@@ -125,7 +133,7 @@ class VideoTriagePipeline {
       );
       final response = await _gemmaService.infer(
         GemmaRequest(
-          prompt: oralScreeningClassifierPrompt,
+          prompt: oralScreeningPromptForLanguage(outputLanguage),
           imagePaths: [input.gemmaImagePath],
           maxTokens: 256,
           temperature: 0,
@@ -148,6 +156,10 @@ class VideoTriagePipeline {
         .map((result) => (result['brief_reason'] as String? ?? '').trim())
         .where((reason) => reason.isNotEmpty)
         .toList();
+    final recommendations = parsedResults
+        .map((result) => (result['recommendation'] as String? ?? '').trim())
+        .where((recommendation) => recommendation.isNotEmpty)
+        .toList();
     final selectionSummary = prepared
         .map((item) => item.selection)
         .toSet()
@@ -155,6 +167,11 @@ class VideoTriagePipeline {
     final reasonSummary = reasons.isEmpty
         ? 'The screening model returned a structured triage result.'
         : reasons.join(' ');
+    final patientMessage = recommendations.isNotEmpty
+        ? '${recommendations.first}\n\n$reasonSummary'
+        : shouldRefer
+        ? 'The video screening found visible or uncertain oral mucosal findings. Please get a clinical review.'
+        : 'The video screening did not find a clear high-risk visual finding. Continue routine screening and seek care if symptoms persist.';
 
     final assessment = FullAssessment(
       visitId: visitId,
@@ -190,9 +207,7 @@ class VideoTriagePipeline {
       ),
       carePlan: CarePlan(
         action: shouldRefer ? 'urgent_referral' : 'routine_rescreen',
-        patientMessage: shouldRefer
-            ? 'The video screening found visible or uncertain oral mucosal findings. Please get a clinical review.'
-            : 'The video screening did not find a clear high-risk visual finding. Continue routine screening and seek care if symptoms persist.',
+        patientMessage: patientMessage,
         ashaMessage: shouldRefer
             ? 'Refer this patient for clinical review. The on-device Gemma classifier flagged at least one sampled frame.'
             : 'No immediate referral was flagged by the sampled-frame classifier. Continue routine follow-up.',

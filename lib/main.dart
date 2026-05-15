@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -20,6 +21,7 @@ import 'inference/gemma_service_factory.dart';
 import 'inference/video_triage_pipeline.dart';
 import 'inference/yolo_prefilter.dart';
 import 'intake/date_of_birth.dart';
+import 'l10n/generated/app_localizations.dart';
 import 'location/indian_locations.dart';
 import 'ui/app_home_screen.dart';
 import 'ui/app_theme.dart';
@@ -47,8 +49,45 @@ void _configureDatabaseFactory() {
   debugPrint('SQLite FFI initialized for desktop runtime.');
 }
 
-class OralCancerApp extends StatelessWidget {
+const _languagePreferenceKey = 'selected_language_code';
+
+class OralCancerApp extends StatefulWidget {
   const OralCancerApp({super.key});
+
+  @override
+  State<OralCancerApp> createState() => _OralCancerAppState();
+}
+
+class _OralCancerAppState extends State<OralCancerApp> {
+  Locale? _locale;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocale();
+  }
+
+  Future<void> _loadLocale() async {
+    final preferences = await SharedPreferences.getInstance();
+    final code = preferences.getString(_languagePreferenceKey);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _locale = code == null ? null : Locale(code);
+      _loaded = true;
+    });
+  }
+
+  Future<void> _setLocale(Locale locale) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_languagePreferenceKey, locale.languageCode);
+    if (!mounted) {
+      return;
+    }
+    setState(() => _locale = locale);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,9 +95,88 @@ class OralCancerApp extends StatelessWidget {
       title: 'Oral Cancer',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
-      home: const AppHomeScreen(screening: IntakeScreen()),
+      locale: _locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
+      home: !_loaded
+          ? const _StartupLoadingScreen()
+          : _locale == null
+          ? LanguageSelectionScreen(onLocaleSelected: _setLocale)
+          : AppHomeScreen(
+              screening: const IntakeScreen(),
+              onChangeLanguage: () => setState(() => _locale = null),
+            ),
     );
   }
+}
+
+class _StartupLoadingScreen extends StatelessWidget {
+  const _StartupLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+}
+
+class LanguageSelectionScreen extends StatelessWidget {
+  const LanguageSelectionScreen({super.key, required this.onLocaleSelected});
+
+  final ValueChanged<Locale> onLocaleSelected;
+
+  static const _options = [
+    _LanguageOption(Locale('en'), 'English'),
+    _LanguageOption(Locale('hi'), 'हिन्दी'),
+    _LanguageOption(Locale('kn'), 'ಕನ್ನಡ'),
+    _LanguageOption(Locale('ta'), 'தமிழ்'),
+    _LanguageOption(Locale('ml'), 'മലയാളം'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    return Scaffold(
+      appBar: AppBar(title: Text(l10n.chooseLanguageTitle)),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              l10n.chooseLanguageSubtitle,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 16),
+            for (final option in _options)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OutlinedButton(
+                  onPressed: () => onLocaleSelected(option.locale),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(option.label),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LanguageOption {
+  const _LanguageOption(this.locale, this.label);
+
+  final Locale locale;
+  final String label;
 }
 
 class IntakeScreen extends StatefulWidget {
@@ -124,7 +242,7 @@ class _IntakeScreenState extends State<IntakeScreen> {
       });
     } catch (error) {
       if (mounted) {
-        setState(() => _error = 'Location data unavailable: $error');
+        setState(() => _error = error.toString());
       }
     }
   }
@@ -198,12 +316,31 @@ class _IntakeScreenState extends State<IntakeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    String? requiredValidator(String? value) {
+      if (value == null || value.trim().isEmpty) {
+        return l10n.requiredError;
+      }
+      return null;
+    }
+
+    String? integerValidator(String? value) {
+      final required = requiredValidator(value);
+      if (required != null) {
+        return required;
+      }
+      if (int.tryParse(value!) == null) {
+        return l10n.numberRequiredError;
+      }
+      return null;
+    }
+
     final selectedStateDistricts = _locations
         .where((location) => location.name == _state)
         .expand((location) => location.districts)
         .toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('Screening intake')),
+      appBar: AppBar(title: Text(l10n.screeningIntakeTitle)),
       body: SafeArea(
         child: Form(
           key: _formKey,
@@ -212,20 +349,20 @@ class _IntakeScreenState extends State<IntakeScreen> {
             children: [
               TextFormField(
                 controller: _name,
-                decoration: const InputDecoration(labelText: 'Name'),
-                validator: _required,
+                decoration: InputDecoration(labelText: l10n.nameLabel),
+                validator: requiredValidator,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _village,
-                decoration: const InputDecoration(labelText: 'Village / area'),
-                validator: _required,
+                decoration: InputDecoration(labelText: l10n.villageLabel),
+                validator: requiredValidator,
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 key: const Key('state-dropdown'),
                 initialValue: _state,
-                decoration: const InputDecoration(labelText: 'State'),
+                decoration: InputDecoration(labelText: l10n.stateLabel),
                 items: _locations
                     .map(
                       (state) => DropdownMenuItem(
@@ -234,7 +371,7 @@ class _IntakeScreenState extends State<IntakeScreen> {
                       ),
                     )
                     .toList(),
-                validator: _required,
+                validator: requiredValidator,
                 onChanged: (value) {
                   final districts = _locations
                       .where((location) => location.name == value)
@@ -250,7 +387,7 @@ class _IntakeScreenState extends State<IntakeScreen> {
               DropdownButtonFormField<String>(
                 key: const Key('district-dropdown'),
                 initialValue: _district,
-                decoration: const InputDecoration(labelText: 'District'),
+                decoration: InputDecoration(labelText: l10n.districtLabel),
                 items: selectedStateDistricts
                     .map(
                       (district) => DropdownMenuItem(
@@ -259,14 +396,14 @@ class _IntakeScreenState extends State<IntakeScreen> {
                       ),
                     )
                     .toList(),
-                validator: _required,
+                validator: requiredValidator,
                 onChanged: (value) => setState(() => _district = value),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 key: const Key('dob-field'),
                 controller: _dobDisplay,
-                decoration: const InputDecoration(labelText: 'Date of birth'),
+                decoration: InputDecoration(labelText: l10n.dateOfBirthLabel),
                 readOnly: true,
                 onTap: _pickDob,
                 validator: (_) => validateDateOfBirth(_selectedDob),
@@ -274,33 +411,39 @@ class _IntakeScreenState extends State<IntakeScreen> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _phone,
-                decoration: const InputDecoration(labelText: 'Phone'),
+                decoration: InputDecoration(labelText: l10n.phoneLabel),
                 keyboardType: TextInputType.phone,
-                validator: _required,
+                validator: requiredValidator,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _pinCode,
-                decoration: const InputDecoration(labelText: 'PIN code'),
+                decoration: InputDecoration(labelText: l10n.pinCodeLabel),
                 keyboardType: TextInputType.number,
-                validator: _required,
+                validator: requiredValidator,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _ashaPin,
-                decoration: const InputDecoration(labelText: 'ASHA PIN'),
+                decoration: InputDecoration(labelText: l10n.ashaPinLabel),
                 keyboardType: TextInputType.number,
                 obscureText: true,
-                validator: _required,
+                validator: requiredValidator,
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: _gender,
-                decoration: const InputDecoration(labelText: 'Gender'),
-                items: const [
-                  DropdownMenuItem(value: 'female', child: Text('Female')),
-                  DropdownMenuItem(value: 'male', child: Text('Male')),
-                  DropdownMenuItem(value: 'other', child: Text('Other')),
+                decoration: InputDecoration(labelText: l10n.genderLabel),
+                items: [
+                  DropdownMenuItem(
+                    value: 'female',
+                    child: Text(l10n.femaleLabel),
+                  ),
+                  DropdownMenuItem(value: 'male', child: Text(l10n.maleLabel)),
+                  DropdownMenuItem(
+                    value: 'other',
+                    child: Text(l10n.otherLabel),
+                  ),
                 ],
                 onChanged: (value) =>
                     setState(() => _gender = value ?? _gender),
@@ -308,33 +451,33 @@ class _IntakeScreenState extends State<IntakeScreen> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _brand,
-                decoration: const InputDecoration(labelText: 'Tobacco brand'),
-                validator: _required,
+                decoration: InputDecoration(labelText: l10n.tobaccoBrandLabel),
+                validator: requiredValidator,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _chews,
-                decoration: const InputDecoration(labelText: 'Chews per day'),
+                decoration: InputDecoration(labelText: l10n.chewsPerDayLabel),
                 keyboardType: TextInputType.number,
-                validator: _integer,
+                validator: integerValidator,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _years,
-                decoration: const InputDecoration(labelText: 'Years used'),
+                decoration: InputDecoration(labelText: l10n.yearsUsedLabel),
                 keyboardType: TextInputType.number,
-                validator: _integer,
+                validator: integerValidator,
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Alcohol use'),
+                title: Text(l10n.alcoholUseLabel),
                 value: _alcohol,
                 onChanged: (value) => setState(() => _alcohol = value),
               ),
               if (_error != null) ErrorText(_error!),
               FilledButton(
                 onPressed: _busy ? null : _continue,
-                child: Text(_busy ? 'Saving' : 'Continue'),
+                child: Text(_busy ? l10n.savingLabel : l10n.continueButton),
               ),
             ],
           ),
@@ -432,7 +575,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
   Future<void> _toggleRecording() async {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
-      setState(() => _error = 'Camera is not ready.');
+      setState(() => _error = AppLocalizations.of(context).cameraNotReadyError);
       return;
     }
     setState(() {
@@ -451,7 +594,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
         });
       } else {
         if (controller.value.isRecordingVideo) {
-          throw StateError('Stop the current recording first.');
+          throw StateError(
+            AppLocalizations.of(context).stopCurrentRecordingError,
+          );
         }
         debugPrint('[OralCancerPipeline] record_start_requested');
         await controller.startVideoRecording();
@@ -477,14 +622,17 @@ class _CaptureScreenState extends State<CaptureScreen> {
           extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'],
         ),
       ],
-      confirmButtonText: 'Select video',
+      confirmButtonText: AppLocalizations.of(context).selectVideoButton,
     );
     if (file == null) {
       debugPrint('[OralCancerPipeline] upload_video_picker_cancelled');
       return;
     }
     if (!File(file.path).existsSync()) {
-      setState(() => _error = 'Video does not exist: ${file.path}');
+      setState(
+        () =>
+            _error = AppLocalizations.of(context).videoMissingError(file.path),
+      );
       return;
     }
     debugPrint('[OralCancerPipeline] upload_video_selected path=${file.path}');
@@ -496,23 +644,24 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   Future<void> _analyze() async {
     final analyzeStarted = DateTime.now();
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _busy = true;
       _error = null;
-      _progress = 'Preparing videos';
+      _progress = l10n.preparingVideosProgress;
     });
     try {
       final modelPath = _defaultModelPath().trim();
       final yoloModelPath = _defaultYoloModelPath().trim();
       if (modelPath.isEmpty) {
-        throw StateError('LiteRT model path is required.');
+        throw StateError(l10n.modelPathRequiredError);
       }
       if (yoloModelPath.isEmpty) {
-        throw StateError('YOLO model path is required.');
+        throw StateError(l10n.yoloPathRequiredError);
       }
       final videoPath = _videoPath;
       if (videoPath == null) {
-        throw StateError('Record or select one intraoral video first.');
+        throw StateError(l10n.recordOrSelectVideoError);
       }
       debugPrint(
         '[OralCancerPipeline] analyze_button_start video=$videoPath '
@@ -528,7 +677,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
       const extractor = FrameExtractor();
       const selector = FrameSelector();
       debugPrint('[OralCancerPipeline] extract_start video=$videoPath');
-      setState(() => _progress = 'Extracting video frames');
+      setState(() => _progress = l10n.extractingFramesProgress);
       final frames = await extractor.extractFrames(
         videoPath: videoPath,
         visitId: visitId,
@@ -537,18 +686,14 @@ class _CaptureScreenState extends State<CaptureScreen> {
         deleteSourceVideo: false,
       );
       debugPrint('[OralCancerPipeline] extract_done frames=${frames.length}');
-      setState(() => _progress = 'Selecting representative frames');
+      setState(() => _progress = l10n.selectingFramesProgress);
       final selected = selector.selectBestFrames(frames, count: maxGemmaImages);
       debugPrint(
         '[OralCancerPipeline] select_done selected=${selected.length} '
         'paths=${selected.join('|')}',
       );
       final database = LocalDatabase();
-      setState(
-        () => _progress =
-            'Running YOLO + Gemma triage '
-            '($maxGemmaImages frame${maxGemmaImages == 1 ? '' : 's'})',
-      );
+      setState(() => _progress = l10n.runningTriageProgress(maxGemmaImages));
       final pipeline = VideoTriagePipeline(
         gemmaService: GemmaServiceFactory.create(
           modelPath: modelPath,
@@ -561,6 +706,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
         clinicalRecord: widget.clinicalRecord,
         framePaths: selected,
         maxGemmaImages: maxGemmaImages,
+        outputLanguage: l10n.gemmaLanguageName,
         onProgress: (message) {
           if (mounted) {
             setState(() => _progress = message);
@@ -598,9 +744,10 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final complete = _videoPath != null && !_recording;
     return Scaffold(
-      appBar: AppBar(title: const Text('Capture intraoral video')),
+      appBar: AppBar(title: Text(l10n.captureVideoTitle)),
       body: FutureBuilder<void>(
         future: _cameraInit,
         builder: (context, snapshot) {
@@ -625,12 +772,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   child: CameraPreview(controller),
                 ),
               if (_isDesktop)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    'Desktop mode: select one intraoral video. The app will '
-                    'sample representative frames for local screening.',
-                  ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(l10n.desktopModeInstructions),
                 ),
               const SizedBox(height: 12),
               Card(
@@ -639,14 +783,16 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Intraoral video'),
+                      Text(l10n.intraoralVideoLabel),
                       const SizedBox(height: 4),
                       Text(
                         _recording
-                            ? 'Recording live video'
+                            ? l10n.recordingLiveVideo
                             : _videoPath == null
-                            ? 'No video selected'
-                            : 'Selected: ${File(_videoPath!).uri.pathSegments.last}',
+                            ? l10n.noVideoSelected
+                            : l10n.selectedVideo(
+                                File(_videoPath!).uri.pathSegments.last,
+                              ),
                       ),
                       const SizedBox(height: 12),
                       Wrap(
@@ -659,15 +805,19 @@ class _CaptureScreenState extends State<CaptureScreen> {
                               icon: Icon(
                                 _recording ? Icons.stop : Icons.videocam,
                               ),
-                              label: Text(_recording ? 'Stop' : 'Record live'),
+                              label: Text(
+                                _recording
+                                    ? l10n.stopButton
+                                    : l10n.recordLiveButton,
+                              ),
                             ),
                           OutlinedButton.icon(
                             onPressed: _busy ? null : _pickDesktopVideo,
                             icon: const Icon(Icons.upload_file),
                             label: Text(
                               _videoPath == null
-                                  ? 'Upload video'
-                                  : 'Change uploaded video',
+                                  ? l10n.uploadVideoButton
+                                  : l10n.changeUploadedVideoButton,
                             ),
                           ),
                         ],
@@ -676,12 +826,9 @@ class _CaptureScreenState extends State<CaptureScreen> {
                   ),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: Text(
-                  'The LiteRT model path is fixed by app configuration; no '
-                  'model selection is required during screening.',
-                ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(l10n.fixedModelPathNotice),
               ),
               if (_error != null) ErrorText(_error!),
               if (_progress != null)
@@ -691,7 +838,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
                 ),
               FilledButton(
                 onPressed: complete && !_busy ? _analyze : null,
-                child: Text(_busy ? 'Analyzing' : 'Analyze'),
+                child: Text(_busy ? l10n.analyzingLabel : l10n.analyzeButton),
               ),
             ],
           );
@@ -718,12 +865,13 @@ class PatientOutputScreen extends StatefulWidget {
 class _PatientOutputScreenState extends State<PatientOutputScreen> {
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final action = widget.assessment.carePlan.action;
     final color = action == 'urgent_referral' || action == 'see_doctor_free'
         ? Colors.red
         : Colors.teal;
     return Scaffold(
-      appBar: AppBar(title: const Text('Result')),
+      appBar: AppBar(title: Text(l10n.resultTitle)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -753,7 +901,7 @@ class _PatientOutputScreenState extends State<PatientOutputScreen> {
                 ),
               );
             },
-            child: const Text('ASHA view'),
+            child: Text(l10n.ashaViewButton),
           ),
           OutlinedButton(
             onPressed: () {
@@ -766,7 +914,7 @@ class _PatientOutputScreenState extends State<PatientOutputScreen> {
                 ),
               );
             },
-            child: const Text('Consent and sharing'),
+            child: Text(l10n.consentSharingButton),
           ),
           OutlinedButton.icon(
             onPressed: () {
@@ -779,7 +927,7 @@ class _PatientOutputScreenState extends State<PatientOutputScreen> {
               );
             },
             icon: const Icon(Icons.translate),
-            label: const Text('Translate locally'),
+            label: Text(l10n.translateLocallyButton),
           ),
           OutlinedButton.icon(
             onPressed: () {
@@ -793,7 +941,7 @@ class _PatientOutputScreenState extends State<PatientOutputScreen> {
               );
             },
             icon: const Icon(Icons.fact_check_outlined),
-            label: const Text('Treatment tracking'),
+            label: Text(l10n.treatmentTrackingButton),
           ),
         ],
       ),
@@ -810,6 +958,7 @@ class RawModelOutputPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final entries = outputs.map(_RawModelOutputEntry.parse).toList();
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
@@ -819,8 +968,8 @@ class RawModelOutputPanel extends StatelessWidget {
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 12),
         childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        title: const Text('Raw model output'),
-        subtitle: Text('${entries.length} site responses from local LiteRT'),
+        title: Text(l10n.rawModelOutputTitle),
+        subtitle: Text(l10n.rawModelOutputSubtitle(entries.length)),
         children: [
           for (var index = 0; index < entries.length; index++) ...[
             _RawModelOutputTile(entry: entries[index]),
@@ -841,6 +990,7 @@ class _RawModelOutputTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final isReview = entry.category == 'refer_for_clinical_review';
     final isRecapture = entry.category == 'recapture_required';
     final badgeColor = entry.category.isEmpty
@@ -851,12 +1001,12 @@ class _RawModelOutputTile extends StatelessWidget {
         ? Colors.orange
         : Colors.teal;
     final badgeLabel = entry.category.isEmpty
-        ? 'Unparsed'
+        ? l10n.unparsedBadge
         : isReview
-        ? 'Review'
+        ? l10n.reviewBadge
         : isRecapture
-        ? 'Recapture'
-        : 'Low risk';
+        ? l10n.recaptureBadge
+        : l10n.lowRiskBadge;
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
@@ -874,7 +1024,7 @@ class _RawModelOutputTile extends StatelessWidget {
         ],
       ),
       subtitle: entry.reason.isEmpty
-          ? const Text('Raw local model response')
+          ? Text(l10n.rawLocalModelResponse)
           : Text(entry.reason, maxLines: 2, overflow: TextOverflow.ellipsis),
       children: [
         Container(
@@ -965,8 +1115,9 @@ class AshaOutputScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('ASHA summary')),
+      appBar: AppBar(title: Text(l10n.ashaSummaryTitle)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -984,7 +1135,12 @@ class AshaOutputScreen extends StatelessWidget {
           Text(assessment.delta.summary),
           const SizedBox(height: 12),
           Text(
-            'Rescreen ${assessment.carePlan.rescreenDate.toIso8601String().split('T').first}',
+            l10n.rescreenDate(
+              assessment.carePlan.rescreenDate
+                  .toIso8601String()
+                  .split('T')
+                  .first,
+            ),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -996,7 +1152,7 @@ class AshaOutputScreen extends StatelessWidget {
               );
             },
             icon: const Icon(Icons.timeline),
-            label: const Text('Progress'),
+            label: Text(l10n.progressButton),
           ),
         ],
       ),
@@ -1019,22 +1175,4 @@ class ErrorText extends StatelessWidget {
       ),
     );
   }
-}
-
-String? _required(String? value) {
-  if (value == null || value.trim().isEmpty) {
-    return 'Required';
-  }
-  return null;
-}
-
-String? _integer(String? value) {
-  final required = _required(value);
-  if (required != null) {
-    return required;
-  }
-  if (int.tryParse(value!) == null) {
-    return 'Number required';
-  }
-  return null;
 }

@@ -1,0 +1,108 @@
+{
+  "@@locale": "en",
+  "appTitle": "Oral Cancer",
+  "chooseLanguageTitle": "Choose language",
+  "chooseLanguageSubtitle": "Select the language used for the app. Gemma will also return the screening explanation in this language.",
+  "continueButton": "Continue",
+  "saveButton": "Save",
+  "changeLanguage": "Change language",
+  "screeningNav": "Screening",
+  "operationsNav": "Operations",
+  "queueNav": "Queue",
+  "screeningIntakeTitle": "Screening intake",
+  "nameLabel": "Name",
+  "villageLabel": "Village / area",
+  "stateLabel": "State",
+  "districtLabel": "District",
+  "dateOfBirthLabel": "Date of birth",
+  "phoneLabel": "Phone",
+  "pinCodeLabel": "PIN code",
+  "ashaPinLabel": "ASHA PIN",
+  "genderLabel": "Gender",
+  "femaleLabel": "Female",
+  "maleLabel": "Male",
+  "otherLabel": "Other",
+  "tobaccoBrandLabel": "Tobacco brand",
+  "chewsPerDayLabel": "Chews per day",
+  "yearsUsedLabel": "Years used",
+  "alcoholUseLabel": "Alcohol use",
+  "savingLabel": "Saving",
+  "requiredError": "Required",
+  "numberRequiredError": "Number required",
+  "locationDataUnavailable": "Location data unavailable: {error}",
+  "@locationDataUnavailable": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "captureVideoTitle": "Capture intraoral video",
+  "desktopModeInstructions": "Desktop mode: select one intraoral video. The app will sample representative frames for local screening.",
+  "intraoralVideoLabel": "Intraoral video",
+  "recordingLiveVideo": "Recording live video",
+  "noVideoSelected": "No video selected",
+  "selectedVideo": "Selected: {fileName}",
+  "@selectedVideo": {
+    "placeholders": {
+      "fileName": {}
+    }
+  },
+  "stopButton": "Stop",
+  "recordLiveButton": "Record live",
+  "uploadVideoButton": "Upload video",
+  "changeUploadedVideoButton": "Change uploaded video",
+  "selectVideoButton": "Select video",
+  "fixedModelPathNotice": "The LiteRT model path is fixed by app configuration; no model selection is required during screening.",
+  "analyzeButton": "Analyze",
+  "analyzingLabel": "Analyzing",
+  "preparingVideosProgress": "Preparing videos",
+  "extractingFramesProgress": "Extracting video frames",
+  "selectingFramesProgress": "Selecting representative frames",
+  "runningTriageProgress": "Running YOLO + Gemma triage ({count, plural, =1{1 frame} other{{count} frames}})",
+  "@runningTriageProgress": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cameraUnavailableError": "No camera is available on this device.",
+  "cameraNotReadyError": "Camera is not ready.",
+  "stopCurrentRecordingError": "Stop the current recording first.",
+  "videoMissingError": "Video does not exist: {path}",
+  "@videoMissingError": {
+    "placeholders": {
+      "path": {}
+    }
+  },
+  "modelPathRequiredError": "LiteRT model path is required.",
+  "yoloPathRequiredError": "YOLO model path is required.",
+  "recordOrSelectVideoError": "Record or select one intraoral video first.",
+  "resultTitle": "Result",
+  "ashaViewButton": "ASHA view",
+  "consentSharingButton": "Consent and sharing",
+  "translateLocallyButton": "Translate locally",
+  "treatmentTrackingButton": "Treatment tracking",
+  "rawModelOutputTitle": "Raw model output",
+  "rawModelOutputSubtitle": "{count, plural, =1{1 site response from local LiteRT} other{{count} site responses from local LiteRT}}",
+  "@rawModelOutputSubtitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "unparsedBadge": "Unparsed",
+  "reviewBadge": "Review",
+  "recaptureBadge": "Recapture",
+  "lowRiskBadge": "Low risk",
+  "rawLocalModelResponse": "Raw local model response",
+  "ashaSummaryTitle": "ASHA summary",
+  "rescreenDate": "Rescreen {date}",
+  "@rescreenDate": {
+    "placeholders": {
+      "date": {}
+    }
+  },
+  "progressButton": "Progress",
+  "gemmaLanguageName": "English"
+}
