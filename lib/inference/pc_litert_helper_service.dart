@@ -25,19 +25,17 @@ class PcLiteRtHelperService implements GemmaService {
     final started = DateTime.now();
     final uri = Uri.parse('$_baseUrl/api/infer');
 
-    if (request.imagePaths.isEmpty) {
-      throw ArgumentError('At least one image path is required for PC infer.');
-    }
-
     final multiRequest = http.MultipartRequest('POST', uri);
     multiRequest.fields['prompt'] = request.prompt;
     if (_modelPath.isNotEmpty) {
       multiRequest.fields['modelPath'] = _modelPath;
     }
     multiRequest.fields['backend'] = _backend;
-    multiRequest.files.add(
-      await http.MultipartFile.fromPath('file', request.imagePaths.first),
-    );
+    if (request.imagePaths.isNotEmpty) {
+      multiRequest.files.add(
+        await http.MultipartFile.fromPath('file', request.imagePaths.first),
+      );
+    }
 
     final streamedResponse = await _client.send(multiRequest);
     final response = await http.Response.fromStream(streamedResponse);

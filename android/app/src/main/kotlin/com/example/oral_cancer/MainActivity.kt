@@ -1,12 +1,21 @@
 package com.example.oral_cancer
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
@@ -26,12 +35,15 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 class MainActivity : FlutterActivity() {
+    private val speechPermissionRequestCode = 8401
     private val engineLock = Any()
     private var cachedEngine: Engine? = null
     private var cachedModelKey: String? = null
     private val yoloLock = Any()
     private var cachedYolo: Interpreter? = null
     private var cachedYoloPath: String? = null
+    private var pendingSpeechResult: MethodChannel.Result? = null
+    private var speechRecognizer: SpeechRecognizer? = null
 
     private fun logMemory(tag: String) {
         val runtime = Runtime.getRuntime()
@@ -62,6 +74,139 @@ class MainActivity : FlutterActivity() {
                 "close" -> closeYoloInterpreter(result)
                 else -> result.notImplemented()
             }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "oral_cancer/speech_intake"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "listenOnce" -> startSpeechRecognition(call.arguments as? Map<*, *>, result)
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == speechPermissionRequestCode) {
+            val result = pendingSpeechResult ?: return
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                beginSpeechRecognition(emptyMap<Any, Any>(), result)
+            } else {
+                pendingSpeechResult = null
+                result.error("AUDIO_PERMISSION_DENIED", "Microphone permission was denied.", null)
+            }
+        }
+    }
+
+    private fun startSpeechRecognition(args: Map<*, *>?, result: MethodChannel.Result) {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            result.error("SPEECH_UNAVAILABLE", "Speech recognition is not available on this device.", null)
+            return
+        }
+        if (pendingSpeechResult != null) {
+            result.error("SPEECH_BUSY", "Speech recognition is already running.", null)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingSpeechResult = result
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                speechPermissionRequestCode
+            )
+            return
+        }
+        beginSpeechRecognition(args ?: emptyMap<Any, Any>(), result)
+    }
+
+    private fun beginSpeechRecognition(args: Map<*, *>, result: MethodChannel.Result) {
+        pendingSpeechResult = result
+        val languageTag = args["languageTag"] as? String ?: "en-IN"
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer?.destroy()
+        speechRecognizer = recognizer
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                Log.i("OralCancerSpeech", "ready language=$languageTag")
+            }
+
+            override fun onBeginningOfSpeech() {
+                Log.i("OralCancerSpeech", "beginning")
+            }
+
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+            override fun onEndOfSpeech() {
+                Log.i("OralCancerSpeech", "end")
+            }
+
+            override fun onError(error: Int) {
+                val pending = pendingSpeechResult ?: return
+                pendingSpeechResult = null
+                recognizer.destroy()
+                if (speechRecognizer == recognizer) {
+                    speechRecognizer = null
+                }
+                val message = speechErrorMessage(error)
+                Log.e("OralCancerSpeech", "error=$error message=$message")
+                pending.error("SPEECH_RECOGNITION_FAILED", message, error)
+            }
+
+            override fun onResults(results: Bundle?) {
+                val pending = pendingSpeechResult ?: return
+                pendingSpeechResult = null
+                recognizer.destroy()
+                if (speechRecognizer == recognizer) {
+                    speechRecognizer = null
+                }
+                val matches = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    .orEmpty()
+                val text = matches.firstOrNull().orEmpty()
+                Log.i("OralCancerSpeech", "result chars=${text.length} alternatives=${matches.size}")
+                pending.success(
+                    mapOf(
+                        "text" to text,
+                        "alternatives" to matches
+                    )
+                )
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) = Unit
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        })
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak patient intake details")
+        }
+        recognizer.startListening(intent)
+    }
+
+    private fun speechErrorMessage(error: Int): String {
+        return when (error) {
+            SpeechRecognizer.ERROR_AUDIO -> "Audio recording error."
+            SpeechRecognizer.ERROR_CLIENT -> "Speech client error."
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing."
+            SpeechRecognizer.ERROR_NETWORK -> "Network error during speech recognition."
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition network timeout."
+            SpeechRecognizer.ERROR_NO_MATCH -> "No speech was recognized."
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer is busy."
+            SpeechRecognizer.ERROR_SERVER -> "Speech recognizer server error."
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input was detected."
+            else -> "Speech recognition failed."
         }
     }
 

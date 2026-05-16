@@ -22,6 +22,8 @@ import 'inference/mobile_model_paths.dart';
 import 'inference/video_triage_pipeline.dart';
 import 'inference/yolo_prefilter.dart';
 import 'intake/date_of_birth.dart';
+import 'intake/intake_extraction_service.dart';
+import 'intake/speech_intake_service.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'location/indian_locations.dart';
 import 'ui/app_home_screen.dart';
@@ -204,6 +206,7 @@ class _IntakeScreenState extends State<IntakeScreen> {
   final _brand = TextEditingController(text: '');
   final _chews = TextEditingController(text: '');
   final _years = TextEditingController(text: '');
+  final _voiceTranscript = TextEditingController(text: '');
   List<IndiaStateLocation> _locations = const [];
   String? _state;
   String? _district;
@@ -211,7 +214,10 @@ class _IntakeScreenState extends State<IntakeScreen> {
   String _gender = 'female';
   bool _alcohol = false;
   bool _busy = false;
+  bool _voiceBusy = false;
   String? _error;
+  String? _voiceError;
+  ExtractedIntake? _extractedIntake;
 
   @override
   void initState() {
@@ -230,7 +236,24 @@ class _IntakeScreenState extends State<IntakeScreen> {
     _brand.dispose();
     _chews.dispose();
     _years.dispose();
+    _voiceTranscript.dispose();
     super.dispose();
+  }
+
+  String _defaultModelPath() {
+    if (!kIsWeb &&
+        (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return const String.fromEnvironment(
+        'LITERT_MODEL_PATH',
+        defaultValue:
+            '/home/sach/gemma/organized_artifacts/models/MAIN_ours_text_ours_vision/model.litertlm',
+      );
+    }
+    return const String.fromEnvironment(
+      'LITERT_MODEL_PATH',
+      defaultValue:
+          '/sdcard/Android/data/com.example.oral_cancer/files/models/gemma-4-E2B-it-final.litertlm',
+    );
   }
 
   Future<void> _loadLocations() async {
@@ -321,6 +344,129 @@ class _IntakeScreenState extends State<IntakeScreen> {
     }
   }
 
+  Future<void> _listenForIntake() async {
+    setState(() {
+      _voiceBusy = true;
+      _voiceError = null;
+      _extractedIntake = null;
+    });
+    try {
+      final speech = await const SpeechIntakeService().listenOnce(
+        languageTag: _speechLanguageTag(Localizations.localeOf(context)),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() => _voiceTranscript.text = speech.text);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _voiceError = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _voiceBusy = false);
+      }
+    }
+  }
+
+  Future<void> _extractIntakeFromTranscript() async {
+    setState(() {
+      _voiceBusy = true;
+      _voiceError = null;
+      _extractedIntake = null;
+    });
+    try {
+      final modelPath = _defaultModelPath().trim();
+      if (modelPath.isEmpty) {
+        throw StateError(AppLocalizations.of(context).modelPathRequiredError);
+      }
+      final service = IntakeExtractionService(
+        gemmaService: GemmaServiceFactory.create(
+          modelPath: modelPath,
+          backend: 'cpu',
+        ),
+      );
+      final extracted = await service.extract(_voiceTranscript.text);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _extractedIntake = extracted);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _voiceError = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _voiceBusy = false);
+      }
+    }
+  }
+
+  void _applyExtractedIntake() {
+    final extracted = _extractedIntake;
+    if (extracted == null) {
+      return;
+    }
+    setState(() {
+      if (extracted.patientName != null) {
+        _name.text = extracted.patientName!;
+      }
+      if (extracted.villageOrArea != null) {
+        _village.text = extracted.villageOrArea!;
+      }
+      if (extracted.state != null &&
+          _locations.any((location) => location.name == extracted.state)) {
+        final matchedState = _locations.firstWhere(
+          (location) => location.name == extracted.state,
+        );
+        _state = matchedState.name;
+        if (extracted.district != null &&
+            matchedState.districts.contains(extracted.district)) {
+          _district = extracted.district;
+        } else if (matchedState.districts.isNotEmpty) {
+          _district = matchedState.districts.first;
+        }
+      }
+      if (extracted.age != null) {
+        _selectedDob = _dateOfBirthFromAge(extracted.age!);
+        _dobDisplay.text = formatDateOfBirth(_selectedDob!);
+      }
+      if (extracted.gender != null) {
+        _gender = extracted.gender!;
+      }
+      if (extracted.tobaccoBrand != null) {
+        _brand.text = extracted.tobaccoBrand!;
+      } else if (extracted.tobaccoUse == true && _brand.text.trim().isEmpty) {
+        _brand.text = 'chewing tobacco';
+      }
+      if (extracted.chewsPerDay != null) {
+        _chews.text = extracted.chewsPerDay!.toString();
+      }
+      if (extracted.yearsUsed != null) {
+        _years.text = extracted.yearsUsed!.toString();
+      }
+      if (extracted.alcoholUse != null) {
+        _alcohol = extracted.alcoholUse!;
+      }
+    });
+    _formKey.currentState?.validate();
+  }
+
+  DateTime _dateOfBirthFromAge(int age) {
+    final today = DateTime.now();
+    return DateTime(today.year - age, today.month, today.day);
+  }
+
+  String _speechLanguageTag(Locale locale) {
+    return switch (locale.languageCode) {
+      'hi' => 'hi-IN',
+      'kn' => 'kn-IN',
+      'ta' => 'ta-IN',
+      'ml' => 'ml-IN',
+      _ => 'en-IN',
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
@@ -354,6 +500,17 @@ class _IntakeScreenState extends State<IntakeScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _VoiceIntakePanel(
+                transcriptController: _voiceTranscript,
+                extracted: _extractedIntake,
+                busy: _voiceBusy,
+                error: _voiceError,
+                onListen: _listenForIntake,
+                onExtract: _extractIntakeFromTranscript,
+                onApply: _applyExtractedIntake,
+                onTranscriptChanged: () => setState(() {}),
+              ),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _name,
                 decoration: InputDecoration(labelText: l10n.nameLabel),
@@ -488,6 +645,161 @@ class _IntakeScreenState extends State<IntakeScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VoiceIntakePanel extends StatelessWidget {
+  const _VoiceIntakePanel({
+    required this.transcriptController,
+    required this.extracted,
+    required this.busy,
+    required this.error,
+    required this.onListen,
+    required this.onExtract,
+    required this.onApply,
+    required this.onTranscriptChanged,
+  });
+
+  final TextEditingController transcriptController;
+  final ExtractedIntake? extracted;
+  final bool busy;
+  final String? error;
+  final VoidCallback onListen;
+  final VoidCallback onExtract;
+  final VoidCallback onApply;
+  final VoidCallback onTranscriptChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final canExtract = transcriptController.text.trim().isNotEmpty && !busy;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Voice intake with Gemma',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Speak or type a short patient summary. Gemma extracts fields, '
+              'then you review and apply them.',
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: busy ? null : onListen,
+                  icon: busy
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.mic),
+                  label: Text(busy ? 'Listening / extracting' : 'Speak intake'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: canExtract ? onExtract : null,
+                  icon: const Icon(Icons.auto_fix_high),
+                  label: const Text('Extract with Gemma'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: transcriptController,
+              decoration: const InputDecoration(
+                labelText: 'Transcript',
+                hintText:
+                    'Patient is a 45-year-old male, uses chewing tobacco daily...',
+              ),
+              minLines: 2,
+              maxLines: 4,
+              onChanged: (_) => onTranscriptChanged(),
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 12),
+              ErrorText(error!),
+            ],
+            if (extracted != null) ...[
+              const SizedBox(height: 12),
+              _ExtractedIntakeReview(extracted: extracted!),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: extracted!.hasAnyPrefill ? onApply : null,
+                icon: const Icon(Icons.playlist_add_check),
+                label: const Text('Apply extracted fields'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExtractedIntakeReview extends StatelessWidget {
+  const _ExtractedIntakeReview({required this.extracted});
+
+  final ExtractedIntake extracted;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <String>[
+      if (extracted.patientName != null) 'Name: ${extracted.patientName}',
+      if (extracted.villageOrArea != null)
+        'Village/area: ${extracted.villageOrArea}',
+      if (extracted.state != null) 'State: ${extracted.state}',
+      if (extracted.district != null) 'District: ${extracted.district}',
+      if (extracted.age != null) 'Age: ${extracted.age}',
+      if (extracted.gender != null) 'Gender: ${extracted.gender}',
+      if (extracted.tobaccoUse != null)
+        'Tobacco use: ${extracted.tobaccoUse! ? 'yes' : 'no'}',
+      if (extracted.tobaccoBrand != null) 'Tobacco: ${extracted.tobaccoBrand}',
+      if (extracted.chewsPerDay != null) 'Chews/day: ${extracted.chewsPerDay}',
+      if (extracted.yearsUsed != null) 'Years used: ${extracted.yearsUsed}',
+      if (extracted.alcoholUse != null)
+        'Alcohol use: ${extracted.alcoholUse! ? 'yes' : 'no'}',
+      if (extracted.symptoms.isNotEmpty)
+        'Symptoms: ${extracted.symptoms.join(', ')}',
+      if (extracted.symptomDuration != null)
+        'Duration: ${extracted.symptomDuration}',
+      if (extracted.missingFields.isNotEmpty)
+        'Still missing: ${extracted.missingFields.join(', ')}',
+      'Confidence: ${(extracted.confidence * 100).round()}%',
+    ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Review extracted fields',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            if (rows.isEmpty)
+              const Text('No form fields were confidently extracted.'),
+            for (final row in rows)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(row),
+              ),
+          ],
         ),
       ),
     );
