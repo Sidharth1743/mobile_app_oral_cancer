@@ -23,7 +23,7 @@ void main() {
     await database.close();
   });
 
-  test('queues only selected post-result consent scopes', () async {
+  test('does not enqueue stub rows; uploads use doctor/research screens', () async {
     final queued = await const PostResultShareQueue().enqueueAllowedShares(
       database: database,
       assessment: _assessment(),
@@ -32,15 +32,9 @@ void main() {
         ConsentScope.cloudBackup,
       }),
     );
-    final items = await database.queuedSyncItems();
 
-    expect(queued.map((item) => item.kind), [
-      'doctor_share_request',
-      'cloud_backup_request',
-    ]);
-    expect(items, hasLength(2));
-    expect(items.first.payload['patientHash'], 'patient-hash');
-    expect(items.first.payload, isNot(contains('fullName')));
+    expect(queued, isEmpty);
+    expect(await database.queuedSyncItems(), isEmpty);
   });
 
   test('queues nothing when no online sharing scope is selected', () async {

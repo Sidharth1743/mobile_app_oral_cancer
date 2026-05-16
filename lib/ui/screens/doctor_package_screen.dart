@@ -111,6 +111,8 @@ class _DoctorPackageScreenState extends State<DoctorPackageScreen> {
                       controller: _doctorUid,
                       decoration: const InputDecoration(
                         labelText: 'Assigned doctor UID',
+                        helperText:
+                            'Operations → Staff login as doctor → copy Firebase UID shown after sign-in.',
                       ),
                       validator: _required,
                     ),
@@ -155,7 +157,9 @@ class _DoctorPackageScreenState extends State<DoctorPackageScreen> {
               ],
               if (_queued != null) ...[
                 const SizedBox(height: 12),
-                Text('Queued ${_queued!.kind}'),
+                Text(
+                  'Queued ${_queued!.kind}. Open Sync queue, sign in as ASHA, tap Sync now.',
+                ),
               ],
             ],
           ),

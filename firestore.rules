@@ -60,7 +60,10 @@ service cloud.firestore {
     }
 
     match /cases/{caseId} {
-      allow read: if isAdmin() || isCaseAsha(resource.data) || isCaseDoctor(resource.data);
+      allow read: if isAdmin()
+        || isCaseAsha(resource.data)
+        || isCaseDoctor(resource.data)
+        || (isNgoCsr() && hasNoDirectIdentity(resource.data));
       allow create: if isAdmin() || (isAsha() && request.resource.data.createdByUid == request.auth.uid && hasNoDirectIdentity(request.resource.data));
       allow update: if isAdmin() || (isCaseAsha(resource.data) && hasNoDirectIdentity(request.resource.data));
       allow delete: if isAdmin();
@@ -85,7 +88,8 @@ service cloud.firestore {
       match /screenings/{visitId} {
         allow read: if isAdmin()
           || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
-          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || (isNgoCsr() && hasNoDirectIdentity(resource.data));
         allow write: if isAdmin()
           || (isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
               && hasNoDirectIdentity(request.resource.data));
@@ -94,7 +98,8 @@ service cloud.firestore {
       match /doctorPackages/{packageId} {
         allow read: if isAdmin()
           || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
-          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || (isNgoCsr() && hasNoDirectIdentity(resource.data));
         allow write: if isAdmin()
           || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data);
       }
@@ -102,7 +107,8 @@ service cloud.firestore {
       match /storageObjects/{objectId} {
         allow read: if isAdmin()
           || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data)
-          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data);
+          || isCaseDoctor(get(/databases/$(database)/documents/cases/$(caseId)).data)
+          || isNgoCsr();
         allow write: if isAdmin()
           || isCaseAsha(get(/databases/$(database)/documents/cases/$(caseId)).data);
       }
@@ -124,7 +130,8 @@ service cloud.firestore {
     }
 
     match /researchExports/{exportId} {
-      allow read, create: if isAdmin() || isResearch();
+      allow read: if isAdmin() || isResearch();
+      allow create: if isAdmin() || isResearch() || (isAsha() && hasNoDirectIdentity(request.resource.data));
       allow update, delete: if isAdmin();
     }
 

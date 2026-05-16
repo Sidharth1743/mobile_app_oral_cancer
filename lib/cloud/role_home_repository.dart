@@ -12,6 +12,9 @@ class CloudCaseSummary {
     required this.updatedAt,
     this.district,
     this.riskLevel,
+    this.state,
+    this.villageCode,
+    this.consentScopes = const [],
   });
 
   final String caseId;
@@ -22,6 +25,9 @@ class CloudCaseSummary {
   final DateTime updatedAt;
   final String? district;
   final String? riskLevel;
+  final String? state;
+  final String? villageCode;
+  final List<String> consentScopes;
 
   factory CloudCaseSummary.fromJson(Map<String, Object?> json) {
     return CloudCaseSummary(
@@ -32,6 +38,9 @@ class CloudCaseSummary {
       recommendedAction: json['recommendedAction'] as String? ?? '',
       district: json['district'] as String?,
       riskLevel: json['riskLevel'] as String?,
+      state: json['state'] as String?,
+      villageCode: json['villageCode'] as String?,
+      consentScopes: List<String>.from(json['consentScopes'] as List? ?? const []),
       updatedAt: _dateTimeFromCloud(json['updatedAt']) ?? DateTime.utc(1970),
     );
   }
@@ -68,6 +77,8 @@ abstract interface class RoleHomeRepository {
   Stream<List<ResearchExportSummary>> researchExports(
     FirebaseUserProfile profile,
   );
+
+  Stream<List<CloudCaseSummary>> ngoProgramCases();
 }
 
 class FirestoreRoleHomeRepository implements RoleHomeRepository {
@@ -81,10 +92,9 @@ class FirestoreRoleHomeRepository implements RoleHomeRepository {
     return _firestore
         .collection('cases')
         .where('createdByUid', isEqualTo: profile.uid)
-        .orderBy('updatedAt', descending: true)
         .limit(50)
         .snapshots()
-        .map(_caseSummaries);
+        .map(_sortedCaseSummaries);
   }
 
   @override
@@ -92,10 +102,18 @@ class FirestoreRoleHomeRepository implements RoleHomeRepository {
     return _firestore
         .collection('cases')
         .where('assignedDoctorUid', isEqualTo: profile.uid)
-        .orderBy('updatedAt', descending: true)
         .limit(50)
         .snapshots()
-        .map(_caseSummaries);
+        .map(_sortedCaseSummaries);
+  }
+
+  @override
+  Stream<List<CloudCaseSummary>> ngoProgramCases() {
+    return _firestore
+        .collection('cases')
+        .limit(200)
+        .snapshots()
+        .map(_sortedCaseSummaries);
   }
 
   @override
@@ -117,6 +135,14 @@ class FirestoreRoleHomeRepository implements RoleHomeRepository {
               )
               .toList(),
         );
+  }
+
+  List<CloudCaseSummary> _sortedCaseSummaries(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    final cases = _caseSummaries(snapshot);
+    cases.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return cases;
   }
 
   List<CloudCaseSummary> _caseSummaries(

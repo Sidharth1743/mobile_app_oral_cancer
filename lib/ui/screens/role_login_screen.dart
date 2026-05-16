@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../auth/role_auth.dart';
 import '../../cloud/firebase_role_auth.dart';
 import '../components/section_panel.dart';
 import '../components/status_badge.dart';
@@ -144,6 +145,13 @@ class _RoleLoginScreenState extends State<RoleLoginScreen> {
                       .where((value) => value.trim().isNotEmpty)
                       .join(' / '),
                 ),
+                if (profile.role == AppRole.doctor) ...[
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    'Doctor Firebase UID (paste into Prepare doctor package):\n${profile.uid}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,

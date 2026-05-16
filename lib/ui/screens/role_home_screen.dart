@@ -6,6 +6,9 @@ import '../../cloud/role_home_repository.dart';
 import '../components/empty_state.dart';
 import '../components/section_panel.dart';
 import '../components/status_badge.dart';
+import 'case_detail_screen.dart';
+import 'ngo_dashboard_screen.dart';
+import 'research_export_detail_screen.dart';
 
 class RoleHomeScreen extends StatelessWidget {
   const RoleHomeScreen({
@@ -27,24 +30,19 @@ class RoleHomeScreen extends StatelessWidget {
           title: 'ASHA home',
           emptyTitle: 'No synced cases',
           stream: repository.ashaCases(profile),
+          role: profile.role,
         );
       case AppRole.doctor:
         return _CaseHome(
           title: 'Doctor home',
           emptyTitle: 'No assigned cases',
           stream: repository.doctorCases(profile),
+          role: profile.role,
         );
       case AppRole.research:
         return _ResearchHome(stream: repository.researchExports(profile));
       case AppRole.ngoCsr:
-        return Scaffold(
-          appBar: AppBar(title: const Text('NGO / CSR home')),
-          body: const EmptyState(
-            icon: Icons.bar_chart_outlined,
-            title: 'Use dashboard',
-            message: 'Aggregate dashboard data is available from Operations.',
-          ),
-        );
+        return const NgoCsrDashboardScreen();
     }
   }
 }
@@ -54,11 +52,13 @@ class _CaseHome extends StatelessWidget {
     required this.title,
     required this.emptyTitle,
     required this.stream,
+    required this.role,
   });
 
   final String title;
   final String emptyTitle;
   final Stream<List<CloudCaseSummary>> stream;
+  final AppRole role;
 
   @override
   Widget build(BuildContext context) {
@@ -87,8 +87,10 @@ class _CaseHome extends StatelessWidget {
           }
           return ListView.separated(
             padding: const EdgeInsets.all(16),
-            itemBuilder: (context, index) =>
-                _CaseRow(caseSummary: cases[index]),
+            itemBuilder: (context, index) => _CaseRow(
+              caseSummary: cases[index],
+              role: role,
+            ),
             separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemCount: cases.length,
           );
@@ -99,29 +101,54 @@ class _CaseHome extends StatelessWidget {
 }
 
 class _CaseRow extends StatelessWidget {
-  const _CaseRow({required this.caseSummary});
+  const _CaseRow({required this.caseSummary, required this.role});
 
   final CloudCaseSummary caseSummary;
+  final AppRole role;
 
   @override
   Widget build(BuildContext context) {
-    return SectionPanel(
-      title: caseSummary.recommendedAction.isEmpty
-          ? caseSummary.caseId
-          : caseSummary.recommendedAction.replaceAll('_', ' '),
-      subtitle: [
-        caseSummary.district,
-        caseSummary.updatedAt.toLocal().toString(),
-      ].whereType<String>().join(' · '),
-      trailing: StatusBadge(
-        label: caseSummary.status,
-        color: Theme.of(context).colorScheme.primary,
-        icon: Icons.assignment_outlined,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => CaseDetailScreen(
+                caseSummary: caseSummary,
+                role: role,
+              ),
+            ),
+          );
+        },
+        child: SectionPanel(
+          title: caseSummary.recommendedAction.isEmpty
+              ? caseSummary.caseId
+              : caseSummary.recommendedAction.replaceAll('_', ' '),
+          subtitle: [
+            caseSummary.district,
+            caseSummary.updatedAt.toLocal().toString(),
+          ].whereType<String>().join(' · '),
+          trailing: const Icon(Icons.chevron_right),
+          children: [
+            Row(
+              children: [
+                StatusBadge(
+                  label: caseSummary.status,
+                  color: Theme.of(context).colorScheme.primary,
+                  icon: Icons.assignment_outlined,
+                ),
+                const SizedBox(width: 8),
+                const Text('Tap to inspect'),
+              ],
+            ),
+            Text('Visit ${caseSummary.visitId}'),
+            if (role != AppRole.ngoCsr)
+              Text('Patient hash ${caseSummary.patientHash}'),
+          ],
+        ),
       ),
-      children: [
-        Text('Visit ${caseSummary.visitId}'),
-        Text('Patient hash ${caseSummary.patientHash}'),
-      ],
     );
   }
 }
@@ -160,15 +187,33 @@ class _ResearchHome extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             itemBuilder: (context, index) {
               final item = exports[index];
-              return SectionPanel(
-                title: item.exportId,
-                subtitle: item.createdAt.toLocal().toString(),
-                trailing: StatusBadge(
-                  label: item.status,
-                  color: Theme.of(context).colorScheme.primary,
-                  icon: Icons.dataset_outlined,
+              return Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ResearchExportDetailScreen(summary: item),
+                      ),
+                    );
+                  },
+                  child: SectionPanel(
+                    title: item.exportId,
+                    subtitle: item.createdAt.toLocal().toString(),
+                    trailing: const Icon(Icons.chevron_right),
+                    children: [
+                      StatusBadge(
+                        label: item.status,
+                        color: Theme.of(context).colorScheme.primary,
+                        icon: Icons.dataset_outlined,
+                      ),
+                      const SizedBox(height: 6),
+                      Text('Visit ${item.visitId} · Tap to inspect'),
+                    ],
+                  ),
                 ),
-                children: [Text('Visit ${item.visitId}')],
               );
             },
             separatorBuilder: (_, _) => const SizedBox(height: 10),

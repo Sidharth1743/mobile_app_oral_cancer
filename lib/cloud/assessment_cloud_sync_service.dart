@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 
 import '../auth/role_auth.dart';
 import '../consent/consent.dart';
@@ -48,30 +50,9 @@ class AssessmentCloudSyncService {
     final consentId = 'consent-${parsed.assessment.visitId}';
     final packageId = 'doctor-${parsed.assessment.visitId}';
 
-    final uploadedPaths = <String>[];
-    for (final site in parsed.assessment.siteResults) {
-      final roiPath = site.roiImagePath;
-      if (roiPath == null || roiPath.trim().isEmpty) {
-        continue;
-      }
-      final storagePath = _paths.roiImage(
-        caseId,
-        parsed.assessment.visitId,
-        site.siteId,
-      );
-      _paths.validateUploadPath(storagePath);
-      final file = File(roiPath);
-      if (!await file.exists()) {
-        throw StateError('ROI image does not exist: $roiPath');
-      }
-      await _storage
-          .ref(storagePath)
-          .putFile(file, SettableMetadata(contentType: 'image/jpeg'));
-      uploadedPaths.add(storagePath);
-    }
-
-    final batch = _firestore.batch();
-    batch.set(_firestore.doc(_paths.caseDocument(caseId)), {
+    // Case root must exist before Storage uploads: storage.rules use
+    // firestore.get(cases/{caseId}) for isCaseAsha(caseId).
+    await _firestore.doc(_paths.caseDocument(caseId)).set({
       'caseId': caseId,
       'visitId': parsed.assessment.visitId,
       'patientHash': parsed.assessment.patientHash,
@@ -88,6 +69,39 @@ class AssessmentCloudSyncService {
       'updatedAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+
+    final uploadedPaths = <String>[];
+    for (final site in parsed.assessment.siteResults) {
+      final roiPath = site.roiImagePath;
+      if (roiPath == null || roiPath.trim().isEmpty) {
+        continue;
+      }
+      final storagePath = _paths.roiImage(
+        caseId,
+        parsed.assessment.visitId,
+        site.siteId,
+      );
+      _paths.validateUploadPath(storagePath);
+      final file = File(roiPath);
+      if (!await file.exists()) {
+        throw StateError('ROI image does not exist: $roiPath');
+      }
+      try {
+        await _storage
+            .ref(storagePath)
+            .putFile(file, SettableMetadata(contentType: 'image/jpeg'));
+        uploadedPaths.add(storagePath);
+      } on FirebaseException catch (error) {
+        // Spark / revoked billing returns 402; rules issues return 403.
+        // Continue with Firestore-only doctor package (case still visible).
+        debugPrint(
+          '[AssessmentCloudSync] ROI upload skipped ($storagePath): '
+          '${error.code} ${error.message}',
+        );
+      }
+    }
+
+    final batch = _firestore.batch();
     batch.set(
       _firestore.doc(_paths.patientIdentityDocument(caseId)),
       {

@@ -87,7 +87,7 @@ export const submitDoctorPackage = onCall({region: 'asia-south1'}, async (reques
 });
 
 export const submitResearchExport = onCall({region: 'asia-south1'}, async (request) => {
-  const actor = await requireActiveRole(request.auth, ['research', 'admin']);
+  const actor = await requireActiveRole(request.auth, ['asha', 'research', 'admin']);
   const payload = request.data;
   try {
     validateResearchExportPayload(payload);

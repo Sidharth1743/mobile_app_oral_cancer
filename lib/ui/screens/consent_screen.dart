@@ -77,9 +77,11 @@ class _ConsentScreenState extends State<ConsentScreen> {
       }
       setState(() {
         _savedConsent = result.consent;
-        _status = result.queuedCount == 0
-            ? 'Consent stored. No sharing request selected.'
-            : 'Consent stored. ${result.queuedCount} request(s) queued.';
+        _status = result.consent.hasAnyOnlineScope
+            ? 'Consent stored. Use “Prepare doctor package” and/or '
+                  '“Create research export” below, then open Sync queue and tap Sync now '
+                  '(signed in as ASHA).'
+            : 'Consent stored. No online sharing scopes selected.';
       });
     } catch (error) {
       setState(() => _error = error.toString());

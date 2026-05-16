@@ -99,4 +99,7 @@ class FakeRoleHomeRepository implements RoleHomeRepository {
   Stream<List<ResearchExportSummary>> researchExports(
     FirebaseUserProfile profile,
   ) => Stream.value(exports);
+
+  @override
+  Stream<List<CloudCaseSummary>> ngoProgramCases() => Stream.value(asha);
 }
