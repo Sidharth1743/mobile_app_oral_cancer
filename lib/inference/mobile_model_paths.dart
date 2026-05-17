@@ -32,8 +32,10 @@ class MobileModelPaths {
       }
     }
 
-    final staged = await _resolveFromInternalModelsDir(_gemmaCandidates) ??
-        await _resolveFromExternalModelsDir(_gemmaCandidates);
+    final staged =
+        await _resolveFromAppFilesModelsDir(_gemmaCandidates) ??
+        await _resolveFromExternalModelsDir(_gemmaCandidates) ??
+        await _resolveFromSupportModelsDir(_gemmaCandidates);
     if (staged != null) {
       return staged;
     }
@@ -50,8 +52,10 @@ class MobileModelPaths {
       }
     }
 
-    final staged = await _resolveFromInternalModelsDir(_yoloCandidates) ??
-        await _resolveFromExternalModelsDir(_yoloCandidates);
+    final staged =
+        await _resolveFromAppFilesModelsDir(_yoloCandidates) ??
+        await _resolveFromExternalModelsDir(_yoloCandidates) ??
+        await _resolveFromSupportModelsDir(_yoloCandidates);
     if (staged != null) {
       return staged;
     }
@@ -59,7 +63,23 @@ class MobileModelPaths {
     return _legacyYoloPath();
   }
 
-  static Future<String?> _resolveFromInternalModelsDir(
+  /// Same location as [push_model_to_phone.sh] (`files/models` via run-as).
+  static Future<String?> _resolveFromAppFilesModelsDir(
+    List<String> fileNames,
+  ) async {
+    if (kIsWeb || !Platform.isAndroid) {
+      return null;
+    }
+
+    final filesDir = await getApplicationDocumentsDirectory();
+    final modelsDir = Directory(p.join(filesDir.path, 'models'));
+    final candidates = fileNames
+        .map((name) => p.join(modelsDir.path, name))
+        .toList(growable: false);
+    return _firstExisting(candidates);
+  }
+
+  static Future<String?> _resolveFromSupportModelsDir(
     List<String> fileNames,
   ) async {
     if (kIsWeb || !Platform.isAndroid) {

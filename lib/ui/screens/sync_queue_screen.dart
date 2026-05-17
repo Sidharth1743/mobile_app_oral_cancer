@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../cloud/firebase_role_auth.dart';
 import '../../data/local_database.dart';
 import '../../sync/cloud_sync_runner.dart';
-import '../../sync/sync_worker.dart';
 import '../components/empty_state.dart';
 import '../components/section_panel.dart';
 import '../components/status_badge.dart';

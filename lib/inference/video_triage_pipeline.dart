@@ -8,7 +8,7 @@ import '../capture/frame_selector.dart';
 import '../data/local_database.dart';
 import '../data/models.dart';
 import 'gemma_service.dart';
-import 'strict_json.dart';
+import 'screening_frame_categories.dart';
 import 'yolo_prefilter.dart';
 
 const oralScreeningClassifierPrompt =
@@ -152,7 +152,7 @@ class VideoTriagePipeline {
         );
         final raw = response.text;
         rawOutputs.add('[site:video_frame_${index + 1}] $raw');
-        parsedResults.add(_parseClassifierOutput(raw));
+        parsedResults.add(parseScreeningClassifierOutput(raw));
         debugPrint(
           '[OralCancerPipeline] gemma_frame_done index=$index '
           'elapsedMs=${response.elapsed.inMilliseconds} '
@@ -166,14 +166,10 @@ class VideoTriagePipeline {
       }
     }
 
-    final shouldRefer = parsedResults.any(
-      (result) => result['category'] == 'refer_for_clinical_review',
-    );
-    final needsRecapture =
-        !shouldRefer &&
-        parsedResults.every(
-          (result) => result['category'] == 'recapture_required',
-        );
+    final aggregation = ScreeningFrameAggregation.fromParsedMaps(parsedResults);
+    final shouldRefer = aggregation.shouldRefer;
+    final needsRecapture = aggregation.needsRecapture;
+    final majorityLabel = formatCategoryLabel(aggregation.majorityCategory);
     final reasons = parsedResults
         .map((result) => (result['brief_reason'] as String? ?? '').trim())
         .where((reason) => reason.isNotEmpty)
@@ -186,9 +182,12 @@ class VideoTriagePipeline {
         .map((item) => item.selection)
         .toSet()
         .join(', ');
+    final categorySummary = aggregation.categoryCounts.entries
+        .map((e) => '${formatCategoryLabel(e.key)}: ${e.value}')
+        .join(', ');
     final reasonSummary = reasons.isEmpty
-        ? 'The screening model returned a structured triage result.'
-        : reasons.join(' ');
+        ? 'Majority category: $majorityLabel ($categorySummary).'
+        : 'Majority category: $majorityLabel ($categorySummary). ${reasons.join(' ')}';
     final patientMessage = recommendations.isNotEmpty
         ? '${recommendations.first}\n\n$reasonSummary'
         : shouldRefer
@@ -219,7 +218,9 @@ class VideoTriagePipeline {
               ? 'Recapture required'
               : shouldRefer
               ? 'Refer for clinical review'
-              : 'Low risk or normal variation',
+              : majorityLabel.isEmpty
+              ? 'Screening complete'
+              : majorityLabel,
           probability: needsRecapture
               ? 1
               : shouldRefer
@@ -358,25 +359,4 @@ class VideoTriagePipeline {
     await _database.saveVisit(assessment);
   }
 
-  Map<String, Object?> _parseClassifierOutput(String raw) {
-    try {
-      final parsed = decodeJsonObject(raw);
-      final category = parsed['category'];
-      if (category == 'low_risk_or_variation' ||
-          category == 'refer_for_clinical_review' ||
-          category == 'recapture_required') {
-        return parsed;
-      }
-    } catch (_) {
-      // Invalid medical triage output should fail safe to review.
-    }
-    return {
-      'category': 'refer_for_clinical_review',
-      'recommendation': 'refer_for_clinical_review',
-      'brief_reason':
-          'The model output could not be parsed reliably, so this screening should be reviewed clinically.',
-      'disclaimer':
-          'This analysis is not a diagnosis and must be reviewed by a qualified clinician.',
-    };
-  }
 }

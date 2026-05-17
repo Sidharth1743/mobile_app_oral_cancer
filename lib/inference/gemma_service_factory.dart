@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import 'capturing_gemma_service.dart';
 import 'gemma_service.dart';
 import 'litert_gemma_service.dart';
 import 'pc_litert_helper_service.dart';
@@ -18,13 +19,22 @@ class GemmaServiceFactory {
     required String modelPath,
     String backend = 'gpu',
   }) {
+    final GemmaService service;
     if (!kIsWeb && Platform.isAndroid) {
-      return LiteRtGemmaService(modelPath: modelPath, backend: backend);
+      service = LiteRtGemmaService(modelPath: modelPath, backend: backend);
+    } else {
+      service = PcLiteRtHelperService(
+        modelPath: modelPath,
+        backend: backend == 'gpu' ? 'cpu' : backend,
+        baseUrl: _desktopHelperUrl,
+      );
     }
-    return PcLiteRtHelperService(
-      modelPath: modelPath,
-      backend: backend == 'gpu' ? 'cpu' : backend,
-      baseUrl: _desktopHelperUrl,
-    );
+    if (kDebugMode) {
+      return CapturingGemmaService(
+        inner: service,
+        captureLabel: Platform.isAndroid ? 'android' : 'desktop',
+      );
+    }
+    return service;
   }
 }

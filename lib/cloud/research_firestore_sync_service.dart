@@ -25,11 +25,9 @@ class ResearchFirestoreSyncService {
       );
     }
     ResearchCloudFunctionUploader.validateResearchPayload(payload);
-    final export =
-        Map<String, Object?>.from(
-              payload['export'] as Map? ?? payload,
-            )
-            as Map<String, Object?>;
+    final export = Map<String, Object?>.from(
+      payload['export'] as Map? ?? payload,
+    );
     final visitId =
         (export['visitId'] as String?) ?? (payload['visitId'] as String?);
     if (visitId == null || visitId.trim().isEmpty) {

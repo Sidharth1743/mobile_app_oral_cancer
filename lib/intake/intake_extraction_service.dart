@@ -56,6 +56,58 @@ class ExtractedIntake {
       alcoholUse != null ||
       symptoms.isNotEmpty ||
       symptomDuration != null;
+
+  ExtractedIntake copyWith({
+    String? patientName,
+    String? villageOrArea,
+    String? state,
+    String? district,
+    int? age,
+    String? gender,
+    bool? tobaccoUse,
+    String? tobaccoBrand,
+    int? chewsPerDay,
+    int? yearsUsed,
+    bool? alcoholUse,
+    List<String>? symptoms,
+    String? symptomDuration,
+    List<String>? missingFields,
+    double? confidence,
+    String? modelName,
+    Map<String, Object?>? rawJson,
+    bool clearPatientName = false,
+    bool clearVillageOrArea = false,
+    bool clearState = false,
+    bool clearDistrict = false,
+    bool clearAge = false,
+    bool clearGender = false,
+    bool clearTobaccoBrand = false,
+    bool clearSymptomDuration = false,
+  }) {
+    return ExtractedIntake(
+      patientName: clearPatientName ? null : (patientName ?? this.patientName),
+      villageOrArea:
+          clearVillageOrArea ? null : (villageOrArea ?? this.villageOrArea),
+      state: clearState ? null : (state ?? this.state),
+      district: clearDistrict ? null : (district ?? this.district),
+      age: clearAge ? null : (age ?? this.age),
+      gender: clearGender ? null : (gender ?? this.gender),
+      tobaccoUse: tobaccoUse ?? this.tobaccoUse,
+      tobaccoBrand:
+          clearTobaccoBrand ? null : (tobaccoBrand ?? this.tobaccoBrand),
+      chewsPerDay: chewsPerDay ?? this.chewsPerDay,
+      yearsUsed: yearsUsed ?? this.yearsUsed,
+      alcoholUse: alcoholUse ?? this.alcoholUse,
+      symptoms: symptoms ?? this.symptoms,
+      symptomDuration: clearSymptomDuration
+          ? null
+          : (symptomDuration ?? this.symptomDuration),
+      missingFields: missingFields ?? this.missingFields,
+      confidence: confidence ?? this.confidence,
+      modelName: modelName ?? this.modelName,
+      rawJson: rawJson ?? this.rawJson,
+    );
+  }
 }
 
 class IntakeExtractionService {

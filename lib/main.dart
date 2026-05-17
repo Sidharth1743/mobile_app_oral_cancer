@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:uuid/uuid.dart';
 
 import 'capture/frame_extractor.dart';
 import 'capture/frame_selector.dart';
+import 'debug/raw_model_output_capture.dart';
 import 'core/deidentification.dart';
 import 'core/pii_vault.dart';
 import 'data/local_database.dart';
@@ -19,11 +21,13 @@ import 'data/models.dart';
 import 'cloud/firebase_bootstrap.dart';
 import 'inference/gemma_service_factory.dart';
 import 'inference/mobile_model_paths.dart';
+import 'inference/screening_frame_categories.dart';
 import 'inference/video_triage_pipeline.dart';
 import 'inference/yolo_prefilter.dart';
 import 'intake/date_of_birth.dart';
 import 'intake/intake_extraction_service.dart';
 import 'intake/speech_intake_service.dart';
+import 'translation/local_translation_service.dart';
 import 'l10n/generated/app_localizations.dart';
 import 'location/indian_locations.dart';
 import 'ui/app_home_screen.dart';
@@ -215,9 +219,14 @@ class _IntakeScreenState extends State<IntakeScreen> {
   bool _alcohol = false;
   bool _busy = false;
   bool _voiceBusy = false;
+  bool _isListening = false;
   String? _error;
   String? _voiceError;
   ExtractedIntake? _extractedIntake;
+  ExtractedIntake? _extractedDraft;
+  final _speechIntake = const SpeechIntakeService();
+  StreamSubscription<String>? _speechTranscriptSub;
+  String _extractedTranslateLanguage = 'English';
 
   @override
   void initState() {
@@ -227,6 +236,10 @@ class _IntakeScreenState extends State<IntakeScreen> {
 
   @override
   void dispose() {
+    unawaited(_speechTranscriptSub?.cancel());
+    if (_isListening) {
+      _speechIntake.cancelListening();
+    }
     _name.dispose();
     _village.dispose();
     _dobDisplay.dispose();
@@ -344,27 +357,78 @@ class _IntakeScreenState extends State<IntakeScreen> {
     }
   }
 
-  Future<void> _listenForIntake() async {
+  Future<String> _resolveGemmaModelPath() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      return (await MobileModelPaths.resolveGemmaPath()).trim();
+    }
+    return _defaultModelPath().trim();
+  }
+
+  Future<void> _ensureGemmaModelAvailable(String modelPath) async {
+    if (modelPath.isEmpty) {
+      throw StateError(AppLocalizations.of(context).modelPathRequiredError);
+    }
+    if (!kIsWeb && Platform.isAndroid && !await File(modelPath).exists()) {
+      throw StateError(
+        'Gemma model not found on device. Run ./scripts/push_model_to_phone.sh '
+        'after building the APK. Expected under app files/models/.',
+      );
+    }
+  }
+
+  Future<void> _toggleVoiceIntake() async {
+    if (_isListening) {
+      setState(() {
+        _voiceBusy = true;
+        _voiceError = null;
+      });
+      try {
+        final speech = await _speechIntake.stopListening();
+        await _speechTranscriptSub?.cancel();
+        _speechTranscriptSub = null;
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isListening = false;
+          _voiceTranscript.text = speech.text;
+        });
+      } catch (error) {
+        if (mounted) {
+          setState(() => _voiceError = error.toString());
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _voiceBusy = false);
+        }
+      }
+      return;
+    }
+
     setState(() {
-      _voiceBusy = true;
       _voiceError = null;
       _extractedIntake = null;
+      _extractedDraft = null;
     });
+    final languageTag = _speechLanguageTag(Localizations.localeOf(context));
     try {
-      final speech = await const SpeechIntakeService().listenOnce(
-        languageTag: _speechLanguageTag(Localizations.localeOf(context)),
+      await _speechTranscriptSub?.cancel();
+      _speechTranscriptSub = SpeechIntakeService.transcriptUpdates().listen(
+        (text) {
+          if (!mounted || text.trim().isEmpty) {
+            return;
+          }
+          setState(() => _voiceTranscript.text = text.trim());
+        },
       );
+      await _speechIntake.startListening(languageTag: languageTag);
       if (!mounted) {
         return;
       }
-      setState(() => _voiceTranscript.text = speech.text);
+      setState(() => _isListening = true);
     } catch (error) {
       if (mounted) {
         setState(() => _voiceError = error.toString());
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _voiceBusy = false);
       }
     }
   }
@@ -376,10 +440,8 @@ class _IntakeScreenState extends State<IntakeScreen> {
       _extractedIntake = null;
     });
     try {
-      final modelPath = _defaultModelPath().trim();
-      if (modelPath.isEmpty) {
-        throw StateError(AppLocalizations.of(context).modelPathRequiredError);
-      }
+      final modelPath = await _resolveGemmaModelPath();
+      await _ensureGemmaModelAvailable(modelPath);
       final service = IntakeExtractionService(
         gemmaService: GemmaServiceFactory.create(
           modelPath: modelPath,
@@ -390,7 +452,50 @@ class _IntakeScreenState extends State<IntakeScreen> {
       if (!mounted) {
         return;
       }
-      setState(() => _extractedIntake = extracted);
+      setState(() {
+        _extractedIntake = extracted;
+        _extractedDraft = extracted;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _voiceError = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _voiceBusy = false);
+      }
+    }
+  }
+
+  Future<void> _translateExtractedReview() async {
+    final draft = _extractedDraft ?? _extractedIntake;
+    if (draft == null) {
+      return;
+    }
+    setState(() {
+      _voiceBusy = true;
+      _voiceError = null;
+    });
+    try {
+      final modelPath = await _resolveGemmaModelPath();
+      await _ensureGemmaModelAvailable(modelPath);
+      final service = LocalGemmaTranslationService(
+        gemmaService: GemmaServiceFactory.create(
+          modelPath: modelPath,
+          backend: 'cpu',
+        ),
+      );
+      final translated = await service.translateExtractedIntake(
+        intake: draft,
+        targetLanguage: _extractedTranslateLanguage,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _extractedIntake = translated;
+        _extractedDraft = translated;
+      });
     } catch (error) {
       if (mounted) {
         setState(() => _voiceError = error.toString());
@@ -403,7 +508,7 @@ class _IntakeScreenState extends State<IntakeScreen> {
   }
 
   void _applyExtractedIntake() {
-    final extracted = _extractedIntake;
+    final extracted = _extractedDraft ?? _extractedIntake;
     if (extracted == null) {
       return;
     }
@@ -502,11 +607,18 @@ class _IntakeScreenState extends State<IntakeScreen> {
             children: [
               _VoiceIntakePanel(
                 transcriptController: _voiceTranscript,
-                extracted: _extractedIntake,
+                extracted: _extractedDraft ?? _extractedIntake,
+                isListening: _isListening,
                 busy: _voiceBusy,
                 error: _voiceError,
-                onListen: _listenForIntake,
+                translateLanguage: _extractedTranslateLanguage,
+                onTranslateLanguageChanged: (value) =>
+                    setState(() => _extractedTranslateLanguage = value),
+                onToggleVoice: _toggleVoiceIntake,
                 onExtract: _extractIntakeFromTranscript,
+                onTranslateExtracted: _translateExtractedReview,
+                onExtractedChanged: (value) =>
+                    setState(() => _extractedDraft = value),
                 onApply: _applyExtractedIntake,
                 onTranscriptChanged: () => setState(() {}),
               ),
@@ -655,26 +767,43 @@ class _VoiceIntakePanel extends StatelessWidget {
   const _VoiceIntakePanel({
     required this.transcriptController,
     required this.extracted,
+    required this.isListening,
     required this.busy,
     required this.error,
-    required this.onListen,
+    required this.translateLanguage,
+    required this.onTranslateLanguageChanged,
+    required this.onToggleVoice,
     required this.onExtract,
+    required this.onTranslateExtracted,
+    required this.onExtractedChanged,
     required this.onApply,
     required this.onTranscriptChanged,
   });
 
   final TextEditingController transcriptController;
   final ExtractedIntake? extracted;
+  final bool isListening;
   final bool busy;
   final String? error;
-  final VoidCallback onListen;
+  final String translateLanguage;
+  final ValueChanged<String> onTranslateLanguageChanged;
+  final VoidCallback onToggleVoice;
   final VoidCallback onExtract;
+  final VoidCallback onTranslateExtracted;
+  final ValueChanged<ExtractedIntake> onExtractedChanged;
   final VoidCallback onApply;
   final VoidCallback onTranscriptChanged;
 
   @override
   Widget build(BuildContext context) {
-    final canExtract = transcriptController.text.trim().isNotEmpty && !busy;
+    final canExtract =
+        transcriptController.text.trim().isNotEmpty && !busy && !isListening;
+    final canStop = isListening && !busy;
+    final voiceLabel = isListening
+        ? 'Tap to stop speaking'
+        : busy
+        ? 'Processing...'
+        : 'Tap to start speaking';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -686,32 +815,38 @@ class _VoiceIntakePanel extends StatelessWidget {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 4),
-            const Text(
-              'Speak or type a short patient summary. Gemma extracts fields, '
-              'then you review and apply them.',
+            Text(
+              isListening
+                  ? 'Listening… speak in phrases. Text appears below as it is recognized. '
+                      'Tap stop when finished.'
+                  : 'Tap once to start speaking, tap again when finished. '
+                      'Gemma extracts fields for you to edit, translate, and apply.',
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  onPressed: busy ? null : onListen,
-                  icon: busy
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.mic),
-                  label: Text(busy ? 'Listening / extracting' : 'Speak intake'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: canExtract ? onExtract : null,
-                  icon: const Icon(Icons.auto_fix_high),
-                  label: const Text('Extract with Gemma'),
-                ),
-              ],
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: (busy && !canStop) ? null : onToggleVoice,
+                style: isListening
+                    ? FilledButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.error,
+                      )
+                    : null,
+                icon: busy && !isListening
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(isListening ? Icons.stop : Icons.mic),
+                label: Text(voiceLabel),
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: canExtract ? onExtract : null,
+              icon: const Icon(Icons.auto_fix_high),
+              label: const Text('Extract with Gemma'),
             ),
             const SizedBox(height: 12),
             TextFormField(
@@ -731,10 +866,18 @@ class _VoiceIntakePanel extends StatelessWidget {
             ],
             if (extracted != null) ...[
               const SizedBox(height: 12),
-              _ExtractedIntakeReview(extracted: extracted!),
+              _EditableExtractedIntakeReview(
+                key: ObjectKey(extracted),
+                extracted: extracted!,
+                translateLanguage: translateLanguage,
+                onTranslateLanguageChanged: onTranslateLanguageChanged,
+                busy: busy,
+                onChanged: onExtractedChanged,
+                onTranslate: onTranslateExtracted,
+              ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
-                onPressed: extracted!.hasAnyPrefill ? onApply : null,
+                onPressed: extracted!.hasAnyPrefill && !busy ? onApply : null,
                 icon: const Icon(Icons.playlist_add_check),
                 label: const Text('Apply extracted fields'),
               ),
@@ -746,36 +889,141 @@ class _VoiceIntakePanel extends StatelessWidget {
   }
 }
 
-class _ExtractedIntakeReview extends StatelessWidget {
-  const _ExtractedIntakeReview({required this.extracted});
+class _EditableExtractedIntakeReview extends StatefulWidget {
+  const _EditableExtractedIntakeReview({
+    super.key,
+    required this.extracted,
+    required this.translateLanguage,
+    required this.onTranslateLanguageChanged,
+    required this.busy,
+    required this.onChanged,
+    required this.onTranslate,
+  });
 
   final ExtractedIntake extracted;
+  final String translateLanguage;
+  final ValueChanged<String> onTranslateLanguageChanged;
+  final bool busy;
+  final ValueChanged<ExtractedIntake> onChanged;
+  final VoidCallback onTranslate;
+
+  @override
+  State<_EditableExtractedIntakeReview> createState() =>
+      _EditableExtractedIntakeReviewState();
+}
+
+class _EditableExtractedIntakeReviewState
+    extends State<_EditableExtractedIntakeReview> {
+  late final TextEditingController _name;
+  late final TextEditingController _village;
+  late final TextEditingController _state;
+  late final TextEditingController _district;
+  late final TextEditingController _age;
+  late final TextEditingController _gender;
+  late final TextEditingController _tobaccoBrand;
+  late final TextEditingController _chews;
+  late final TextEditingController _years;
+  late final TextEditingController _symptoms;
+  late final TextEditingController _symptomDuration;
+  bool? _tobaccoUse;
+  bool? _alcoholUse;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController();
+    _village = TextEditingController();
+    _state = TextEditingController();
+    _district = TextEditingController();
+    _age = TextEditingController();
+    _gender = TextEditingController();
+    _tobaccoBrand = TextEditingController();
+    _chews = TextEditingController();
+    _years = TextEditingController();
+    _symptoms = TextEditingController();
+    _symptomDuration = TextEditingController();
+    _syncFrom(widget.extracted);
+  }
+
+  @override
+  void didUpdateWidget(covariant _EditableExtractedIntakeReview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.extracted != widget.extracted) {
+      _syncFrom(widget.extracted);
+    }
+  }
+
+  void _syncFrom(ExtractedIntake extracted) {
+    _name.text = extracted.patientName ?? '';
+    _village.text = extracted.villageOrArea ?? '';
+    _state.text = extracted.state ?? '';
+    _district.text = extracted.district ?? '';
+    _age.text = extracted.age?.toString() ?? '';
+    _gender.text = extracted.gender ?? '';
+    _tobaccoBrand.text = extracted.tobaccoBrand ?? '';
+    _chews.text = extracted.chewsPerDay?.toString() ?? '';
+    _years.text = extracted.yearsUsed?.toString() ?? '';
+    _symptoms.text = extracted.symptoms.join(', ');
+    _symptomDuration.text = extracted.symptomDuration ?? '';
+    _tobaccoUse = extracted.tobaccoUse;
+    _alcoholUse = extracted.alcoholUse;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _village.dispose();
+    _state.dispose();
+    _district.dispose();
+    _age.dispose();
+    _gender.dispose();
+    _tobaccoBrand.dispose();
+    _chews.dispose();
+    _years.dispose();
+    _symptoms.dispose();
+    _symptomDuration.dispose();
+    super.dispose();
+  }
+
+  void _notifyChanged() {
+    widget.onChanged(
+      widget.extracted.copyWith(
+        patientName: _optionalText(_name.text),
+        villageOrArea: _optionalText(_village.text),
+        state: _optionalText(_state.text),
+        district: _optionalText(_district.text),
+        age: int.tryParse(_age.text.trim()),
+        gender: _optionalText(_gender.text)?.toLowerCase(),
+        tobaccoUse: _tobaccoUse,
+        tobaccoBrand: _optionalText(_tobaccoBrand.text),
+        chewsPerDay: int.tryParse(_chews.text.trim()),
+        yearsUsed: int.tryParse(_years.text.trim()),
+        alcoholUse: _alcoholUse,
+        symptoms: _symptoms.text
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(),
+        symptomDuration: _optionalText(_symptomDuration.text),
+        clearPatientName: _name.text.trim().isEmpty,
+        clearVillageOrArea: _village.text.trim().isEmpty,
+        clearState: _state.text.trim().isEmpty,
+        clearDistrict: _district.text.trim().isEmpty,
+        clearAge: _age.text.trim().isEmpty,
+        clearGender: _gender.text.trim().isEmpty,
+        clearTobaccoBrand: _tobaccoBrand.text.trim().isEmpty,
+        clearSymptomDuration: _symptomDuration.text.trim().isEmpty,
+      ),
+    );
+  }
+
+  String? _optionalText(String value) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final rows = <String>[
-      if (extracted.patientName != null) 'Name: ${extracted.patientName}',
-      if (extracted.villageOrArea != null)
-        'Village/area: ${extracted.villageOrArea}',
-      if (extracted.state != null) 'State: ${extracted.state}',
-      if (extracted.district != null) 'District: ${extracted.district}',
-      if (extracted.age != null) 'Age: ${extracted.age}',
-      if (extracted.gender != null) 'Gender: ${extracted.gender}',
-      if (extracted.tobaccoUse != null)
-        'Tobacco use: ${extracted.tobaccoUse! ? 'yes' : 'no'}',
-      if (extracted.tobaccoBrand != null) 'Tobacco: ${extracted.tobaccoBrand}',
-      if (extracted.chewsPerDay != null) 'Chews/day: ${extracted.chewsPerDay}',
-      if (extracted.yearsUsed != null) 'Years used: ${extracted.yearsUsed}',
-      if (extracted.alcoholUse != null)
-        'Alcohol use: ${extracted.alcoholUse! ? 'yes' : 'no'}',
-      if (extracted.symptoms.isNotEmpty)
-        'Symptoms: ${extracted.symptoms.join(', ')}',
-      if (extracted.symptomDuration != null)
-        'Duration: ${extracted.symptomDuration}',
-      if (extracted.missingFields.isNotEmpty)
-        'Still missing: ${extracted.missingFields.join(', ')}',
-      'Confidence: ${(extracted.confidence * 100).round()}%',
-    ];
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
@@ -791,16 +1039,95 @@ class _ExtractedIntakeReview extends StatelessWidget {
               'Review extracted fields',
               style: Theme.of(context).textTheme.titleSmall,
             ),
+            const SizedBox(height: 4),
+            const Text('Edit any value before applying or translating.'),
             const SizedBox(height: 8),
-            if (rows.isEmpty)
-              const Text('No form fields were confidently extracted.'),
-            for (final row in rows)
+            _editableField('Name', _name),
+            _editableField('Village/area', _village),
+            _editableField('State', _state),
+            _editableField('District', _district),
+            _editableField('Age', _age, keyboardType: TextInputType.number),
+            _editableField('Gender', _gender),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Tobacco use'),
+              value: _tobaccoUse ?? false,
+              onChanged: (value) {
+                setState(() => _tobaccoUse = value);
+                _notifyChanged();
+              },
+            ),
+            _editableField('Tobacco brand', _tobaccoBrand),
+            _editableField('Chews/day', _chews, keyboardType: TextInputType.number),
+            _editableField('Years used', _years, keyboardType: TextInputType.number),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Alcohol use'),
+              value: _alcoholUse ?? false,
+              onChanged: (value) {
+                setState(() => _alcoholUse = value);
+                _notifyChanged();
+              },
+            ),
+            _editableField('Symptoms (comma-separated)', _symptoms, maxLines: 2),
+            _editableField('Symptom duration', _symptomDuration),
+            if (widget.extracted.missingFields.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(row),
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Still missing: ${widget.extracted.missingFields.join(', ')}',
+                ),
               ),
+            Text(
+              'Confidence: ${(widget.extracted.confidence * 100).round()}%',
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: widget.translateLanguage,
+              decoration: const InputDecoration(labelText: 'Translate to'),
+              items: const [
+                DropdownMenuItem(value: 'English', child: Text('English')),
+                DropdownMenuItem(value: 'Hindi', child: Text('Hindi')),
+                DropdownMenuItem(value: 'Tamil', child: Text('Tamil')),
+                DropdownMenuItem(value: 'Kannada', child: Text('Kannada')),
+                DropdownMenuItem(value: 'Malayalam', child: Text('Malayalam')),
+                DropdownMenuItem(value: 'Marathi', child: Text('Marathi')),
+                DropdownMenuItem(value: 'Telugu', child: Text('Telugu')),
+              ],
+              onChanged: widget.busy
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        widget.onTranslateLanguageChanged(value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: widget.busy ? null : widget.onTranslate,
+              icon: const Icon(Icons.translate),
+              label: const Text('Translate fields with Gemma'),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _editableField(
+    String label,
+    TextEditingController controller, {
+    TextInputType? keyboardType,
+    int maxLines = 1,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextFormField(
+        controller: controller,
+        decoration: InputDecoration(labelText: label, isDense: true),
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        onChanged: (_) => _notifyChanged(),
       ),
     );
   }
@@ -1087,6 +1414,11 @@ class _CaptureScreenState extends State<CaptureScreen> {
         '[OralCancerPipeline] analyze_button_done action=${assessment.carePlan.action} '
         'elapsedMs=${DateTime.now().difference(analyzeStarted).inMilliseconds}',
       );
+      await RawModelOutputCapture.recordAssessmentBundle(
+        visitId: assessment.visitId,
+        rawModelOutputs: assessment.rawModelOutputs,
+        carePlanAction: assessment.carePlan.action,
+      );
       if (!mounted) {
         return;
       }
@@ -1337,6 +1669,9 @@ class RawModelOutputPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final entries = outputs.map(_RawModelOutputEntry.parse).toList();
+    final aggregation = ScreeningFrameAggregation.fromParsedMaps(
+      entries.map((entry) => entry.toLegacyMap()).toList(),
+    );
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
     return DecoratedBox(
@@ -1351,12 +1686,88 @@ class RawModelOutputPanel extends StatelessWidget {
         title: Text(l10n.rawModelOutputTitle),
         subtitle: Text(l10n.rawModelOutputSubtitle(entries.length)),
         children: [
+          _FrameCategorySummaryCard(aggregation: aggregation),
+          const SizedBox(height: 12),
           for (var index = 0; index < entries.length; index++) ...[
             _RawModelOutputTile(entry: entries[index]),
             if (index != entries.length - 1)
               Divider(height: 16, color: theme.colorScheme.outlineVariant),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _FrameCategorySummaryCard extends StatelessWidget {
+  const _FrameCategorySummaryCard({required this.aggregation});
+
+  final ScreeningFrameAggregation aggregation;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final majority = aggregation.majorityCategory;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Majority category',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              majority.isEmpty
+                  ? 'No category parsed'
+                  : '${formatCategoryLabel(majority)} (${aggregation.categoryCounts[majority] ?? 0} of ${aggregation.frames.length} frames)',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Per frame',
+              style: theme.textTheme.labelLarge,
+            ),
+            const SizedBox(height: 4),
+            for (var i = 0; i < aggregation.frames.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Frame ${i + 1}: ',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        formatCategoryLabel(aggregation.frames[i].category),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (aggregation.categoryCounts.length > 1) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Counts: ${aggregation.categoryCounts.entries.map((e) => '${formatCategoryLabel(e.key)} ${e.value}').join(' · ')}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1371,22 +1782,21 @@ class _RawModelOutputTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = AppLocalizations.of(context);
-    final isReview = entry.category == 'refer_for_clinical_review';
-    final isRecapture = entry.category == 'recapture_required';
+    final categoryLabel = formatCategoryLabel(entry.category);
+    final isReview =
+        entry.category.contains('refer') ||
+        entry.recommendation.contains('refer');
+    final isRecapture =
+        entry.category == 'recapture_required' ||
+        entry.recommendation == 'recapture_required';
     final badgeColor = entry.category.isEmpty
         ? theme.colorScheme.outline
         : isReview
         ? Colors.red
         : isRecapture
         ? Colors.orange
-        : Colors.teal;
-    final badgeLabel = entry.category.isEmpty
-        ? l10n.unparsedBadge
-        : isReview
-        ? l10n.reviewBadge
-        : isRecapture
-        ? l10n.recaptureBadge
-        : l10n.lowRiskBadge;
+        : theme.colorScheme.primary;
+    final badgeLabel = entry.category.isEmpty ? l10n.unparsedBadge : categoryLabel;
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
@@ -1434,14 +1844,23 @@ class _RawModelOutputEntry {
   const _RawModelOutputEntry({
     required this.siteId,
     required this.category,
+    required this.recommendation,
     required this.reason,
     required this.cleanedRaw,
   });
 
   final String siteId;
   final String category;
+  final String recommendation;
   final String reason;
   final String cleanedRaw;
+
+  Map<String, Object?> toLegacyMap() => {
+    'category': category,
+    'recommendation': recommendation,
+    'brief_reason': reason,
+    'disclaimer': '',
+  };
 
   String get siteLabel => siteId
       .split('_')
@@ -1456,17 +1875,18 @@ class _RawModelOutputEntry {
       RegExp(r'^\[site:[^\]]+\]\s*'),
       '',
     );
-    final cleaned = _stripFence(withoutPrefix);
-    final category = _field(cleaned, 'category').toLowerCase();
-    final recommendation = _field(cleaned, 'recommendation');
-    final reason = _field(cleaned, 'brief_reason').isNotEmpty
-        ? _field(cleaned, 'brief_reason')
+    final parsed = parseScreeningClassifierOutput(withoutPrefix);
+    final category = (parsed['category'] as String? ?? '').toLowerCase();
+    final recommendation = parsed['recommendation'] as String? ?? '';
+    final reason = (parsed['brief_reason'] as String? ?? '').trim().isNotEmpty
+        ? parsed['brief_reason'] as String
         : recommendation;
     return _RawModelOutputEntry(
       siteId: siteId,
       category: category,
+      recommendation: recommendation,
       reason: reason,
-      cleanedRaw: cleaned,
+      cleanedRaw: _stripFence(withoutPrefix),
     );
   }
 
@@ -1476,15 +1896,6 @@ class _RawModelOutputEntry {
     text = text.replaceFirst(RegExp(r'^```\s*'), '');
     text = text.replaceFirst(RegExp(r'\s*```$'), '');
     return text.trim();
-  }
-
-  static String _field(String source, String field) {
-    final pattern = RegExp(
-      '"${RegExp.escape(field)}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"',
-      caseSensitive: false,
-    );
-    final match = pattern.firstMatch(source);
-    return match?.group(1)?.replaceAll(r'\"', '"').trim() ?? '';
   }
 }
 

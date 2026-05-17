@@ -3,12 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:oral_cancer/auth/role_auth.dart';
 import 'package:oral_cancer/cloud/firebase_role_auth.dart';
 import 'package:oral_cancer/consent/consent.dart';
-import 'package:oral_cancer/dashboard/dashboard_models.dart';
+import 'package:oral_cancer/cloud/role_home_repository.dart';
+import 'package:oral_cancer/dashboard/ngo_dashboard_metrics.dart';
 import 'package:oral_cancer/data/local_database.dart';
 import 'package:oral_cancer/data/models.dart';
 import 'package:oral_cancer/ui/app_theme.dart';
 import 'package:oral_cancer/ui/screens/consent_screen.dart';
-import 'package:oral_cancer/ui/screens/ngo_dashboard_screen.dart';
 import 'package:oral_cancer/ui/screens/role_login_screen.dart';
 import 'package:oral_cancer/ui/screens/sync_queue_screen.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -118,28 +118,36 @@ void main() {
     expect(find.text('Visit visit-1'), findsOneWidget);
   });
 
-  testWidgets('NGO dashboard renders aggregate data without identity', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        const NgoCsrDashboardScreen(
-          metrics: DashboardMetrics(
-            totalScreenings: 12,
-            highRiskCount: 3,
-            urgentCount: 1,
-            averageUncertainty: 0.25,
-            byVillageCode: {'village-code-1': 7, 'village-code-2': 5},
-          ),
+  test('NGO program metrics aggregate de-identified case data', () {
+    final cases = <CloudCaseSummary>[
+      for (var i = 0; i < 12; i++)
+        CloudCaseSummary(
+          caseId: 'case-$i',
+          visitId: 'visit-$i',
+          patientHash: 'patient-hash-$i',
+          status: 'synced',
+          recommendedAction: i == 0 ? 'urgent_referral' : 'low_risk',
+          updatedAt: DateTime.utc(2026, 5, 3, 10 + i),
+          district: 'Chennai',
+          villageCode: i < 7 ? 'village-code-1' : 'village-code-2',
+          consentScopes: const ['cloudBackup', 'researchExport'],
         ),
-      ),
-    );
+    ];
 
-    expect(find.text('Screenings'), findsOneWidget);
-    expect(find.text('12'), findsOneWidget);
-    expect(find.text('village-code-1'), findsOneWidget);
-    expect(find.textContaining('Meera'), findsNothing);
-    expect(find.textContaining('9999999999'), findsNothing);
+    final metrics = NgoDashboardMetrics.fromCases(cases);
+
+    expect(metrics.totalScreenings, 12);
+    expect(metrics.urgentCount, 1);
+    expect(metrics.byVillageCode['village-code-1'], 7);
+    expect(metrics.byVillageCode['village-code-2'], 5);
+    expect(metrics.cloudBackupEnabled, 12);
+    expect(
+      metrics.recentCases.every((item) => !item.patientHash.contains('Meera')),
+      isTrue,
+    );
+    for (final item in metrics.recentCases) {
+      expect(item.patientHash, isNot(contains('9999999999')));
+    }
   });
 }
 

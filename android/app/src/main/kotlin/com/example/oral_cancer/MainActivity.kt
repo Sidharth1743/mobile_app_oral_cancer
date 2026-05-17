@@ -10,6 +10,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -23,6 +25,7 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import org.tensorflow.lite.Interpreter
 import java.io.File
@@ -44,6 +47,15 @@ class MainActivity : FlutterActivity() {
     private var cachedYoloPath: String? = null
     private var pendingSpeechResult: MethodChannel.Result? = null
     private var speechRecognizer: SpeechRecognizer? = null
+    private var speechListening = false
+    private var speechLanguageTag = "en-IN"
+    private var pendingSpeechManual = false
+    private val accumulatedSpeechText = StringBuilder()
+    private var latestPartialSpeechText = ""
+    private val speechHandler = Handler(Looper.getMainLooper())
+    private var speechRestartRunnable: Runnable? = null
+    private var consecutiveNoMatchRestarts = 0
+    private var speechEventSink: EventChannel.EventSink? = null
 
     private fun logMemory(tag: String) {
         val runtime = Runtime.getRuntime()
@@ -81,12 +93,29 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "listenOnce" -> startSpeechRecognition(call.arguments as? Map<*, *>, result)
+                "startListening" -> beginManualSpeechListening(call.arguments as? Map<*, *>, result)
+                "stopListening" -> finishManualSpeechListening(result)
+                "cancelListening" -> cancelManualSpeechListening(result)
                 else -> result.notImplemented()
             }
         }
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "oral_cancer/speech_intake_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                speechEventSink = events
+                emitSpeechTranscript()
+            }
+
+            override fun onCancel(arguments: Any?) {
+                speechEventSink = null
+            }
+        })
     }
 
     override fun onDestroy() {
+        speechEventSink = null
         speechRecognizer?.destroy()
         speechRecognizer = null
         super.onDestroy()
@@ -101,25 +130,44 @@ class MainActivity : FlutterActivity() {
         if (requestCode == speechPermissionRequestCode) {
             val result = pendingSpeechResult ?: return
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                beginSpeechRecognition(emptyMap<Any, Any>(), result)
+                if (pendingSpeechManual) {
+                    beginSpeechRecognition(
+                        mapOf("languageTag" to speechLanguageTag),
+                        result,
+                        manualMode = true,
+                        completeImmediately = true
+                    )
+                } else {
+                    beginSpeechRecognition(emptyMap<Any, Any>(), result, manualMode = false)
+                }
             } else {
                 pendingSpeechResult = null
+                pendingSpeechManual = false
                 result.error("AUDIO_PERMISSION_DENIED", "Microphone permission was denied.", null)
             }
         }
     }
 
     private fun startSpeechRecognition(args: Map<*, *>?, result: MethodChannel.Result) {
+        if (!ensureSpeechPermission(result)) {
+            return
+        }
+        beginSpeechRecognition(args ?: emptyMap<Any, Any>(), result, manualMode = false)
+    }
+
+    private fun beginManualSpeechListening(args: Map<*, *>?, result: MethodChannel.Result) {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             result.error("SPEECH_UNAVAILABLE", "Speech recognition is not available on this device.", null)
             return
         }
-        if (pendingSpeechResult != null) {
+        if (speechListening || pendingSpeechResult != null) {
             result.error("SPEECH_BUSY", "Speech recognition is already running.", null)
             return
         }
+        speechLanguageTag = args?.get("languageTag") as? String ?: "en-IN"
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingSpeechResult = result
+            pendingSpeechManual = true
             ActivityCompat.requestPermissions(
                 this,
                 arrayOf(Manifest.permission.RECORD_AUDIO),
@@ -127,21 +175,253 @@ class MainActivity : FlutterActivity() {
             )
             return
         }
-        beginSpeechRecognition(args ?: emptyMap<Any, Any>(), result)
+        beginSpeechRecognition(
+            mapOf("languageTag" to speechLanguageTag),
+            result,
+            manualMode = true,
+            completeImmediately = true
+        )
     }
 
-    private fun beginSpeechRecognition(args: Map<*, *>, result: MethodChannel.Result) {
+    private fun finishManualSpeechListening(result: MethodChannel.Result) {
+        if (!speechListening) {
+            result.error("SPEECH_NOT_ACTIVE", "Speech recognition is not running.", null)
+            return
+        }
+        if (pendingSpeechResult != null) {
+            result.error("SPEECH_BUSY", "Speech recognition is already finishing.", null)
+            return
+        }
+        cancelScheduledSpeechRestart()
         pendingSpeechResult = result
+        val accumulated = currentTranscript()
+        if (accumulated.isNotEmpty()) {
+            deliverSpeechSuccess(accumulated, listOf(accumulated))
+            return
+        }
+        try {
+            speechRecognizer?.stopListening()
+        } catch (error: Throwable) {
+            Log.e("OralCancerSpeech", "stopListening failed", error)
+            deliverSpeechFailure(
+                "SPEECH_RECOGNITION_FAILED",
+                "Could not stop speech recognition.",
+                SpeechRecognizer.ERROR_CLIENT
+            )
+        }
+    }
+
+    private fun cancelManualSpeechListening(result: MethodChannel.Result) {
+        resetSpeechSession()
+        result.success(null)
+    }
+
+    private fun resetSpeechSession() {
+        cancelScheduledSpeechRestart()
+        pendingSpeechResult = null
+        speechListening = false
+        consecutiveNoMatchRestarts = 0
+        accumulatedSpeechText.clear()
+        latestPartialSpeechText = ""
+        speechRecognizer?.cancel()
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+    }
+
+    private fun cancelScheduledSpeechRestart() {
+        speechRestartRunnable?.let { speechHandler.removeCallbacks(it) }
+        speechRestartRunnable = null
+    }
+
+    private fun scheduleManualListenCycle(languageTag: String, delayMs: Long = 500L) {
+        if (!speechListening || pendingSpeechResult != null) {
+            return
+        }
+        cancelScheduledSpeechRestart()
+        val runnable = Runnable {
+            speechRestartRunnable = null
+            if (!speechListening || pendingSpeechResult != null) {
+                return@Runnable
+            }
+            beginManualListenCycle(languageTag)
+        }
+        speechRestartRunnable = runnable
+        speechHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun beginManualListenCycle(languageTag: String) {
+        speechRecognizer?.destroy()
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer ->
+            recognizer.setRecognitionListener(
+                createSpeechRecognitionListener(languageTag, manualMode = true)
+            )
+            recognizer.startListening(buildSpeechIntent(languageTag, manualMode = true))
+            Log.i("OralCancerSpeech", "listen cycle started")
+        }
+    }
+
+    private fun buildSpeechIntent(languageTag: String, manualMode: Boolean): Intent {
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak patient intake details")
+            if (manualMode) {
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 120_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 120_000L)
+                putExtra(
+                    RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                    120_000L
+                )
+            }
+        }
+    }
+
+    private fun emitSpeechTranscript() {
+        if (!speechListening) {
+            return
+        }
+        val text = currentTranscript()
+        runOnUiThread { speechEventSink?.success(text) }
+    }
+
+    private fun currentTranscript(): String {
+        val base = accumulatedSpeechText.toString().trim()
+        val partial = latestPartialSpeechText.trim()
+        if (partial.isEmpty()) {
+            return base
+        }
+        if (base.isEmpty()) {
+            return partial
+        }
+        return if (base.endsWith(partial)) base else "$base $partial"
+    }
+
+    private fun appendSpeechResults(results: Bundle?) {
+        val matches = results
+            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+            .orEmpty()
+        val text = matches.firstOrNull().orEmpty().trim()
+        if (text.isEmpty()) {
+            return
+        }
+        if (accumulatedSpeechText.isNotEmpty()) {
+            accumulatedSpeechText.append(' ')
+        }
+        accumulatedSpeechText.append(text)
+        latestPartialSpeechText = ""
+        consecutiveNoMatchRestarts = 0
+        Log.i(
+            "OralCancerSpeech",
+            "accumulated chars=${accumulatedSpeechText.length} segmentChars=${text.length}"
+        )
+        emitSpeechTranscript()
+    }
+
+    private fun deliverSpeechSuccess(text: String, alternatives: List<String>) {
+        val pending = pendingSpeechResult ?: return
+        cancelScheduledSpeechRestart()
+        pendingSpeechResult = null
+        speechListening = false
+        consecutiveNoMatchRestarts = 0
+        accumulatedSpeechText.clear()
+        latestPartialSpeechText = ""
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        Log.i("OralCancerSpeech", "delivered chars=${text.length}")
+        pending.success(
+            mapOf(
+                "text" to text,
+                "alternatives" to alternatives
+            )
+        )
+    }
+
+    private fun deliverSpeechFailure(code: String, message: String, errorValue: Int) {
+        val pending = pendingSpeechResult ?: return
+        cancelScheduledSpeechRestart()
+        pendingSpeechResult = null
+        speechListening = false
+        consecutiveNoMatchRestarts = 0
+        accumulatedSpeechText.clear()
+        latestPartialSpeechText = ""
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        Log.e("OralCancerSpeech", "failure message=$message")
+        pending.error(code, message, errorValue)
+    }
+
+    private fun shouldRecoverManualSpeechError(error: Int): Boolean {
+        return error == SpeechRecognizer.ERROR_NO_MATCH ||
+            error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+            error == SpeechRecognizer.ERROR_CLIENT ||
+            error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+    }
+
+    private fun ensureSpeechPermission(result: MethodChannel.Result): Boolean {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            result.error("SPEECH_UNAVAILABLE", "Speech recognition is not available on this device.", null)
+            return false
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingSpeechResult = result
+            pendingSpeechManual = false
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                speechPermissionRequestCode
+            )
+            return false
+        }
+        return true
+    }
+
+    private fun beginSpeechRecognition(
+        args: Map<*, *>,
+        result: MethodChannel.Result,
+        manualMode: Boolean,
+        completeImmediately: Boolean = false
+    ) {
+        if (!completeImmediately) {
+            pendingSpeechResult = result
+        }
         val languageTag = args["languageTag"] as? String ?: "en-IN"
+        speechLanguageTag = languageTag
+        if (manualMode) {
+            accumulatedSpeechText.clear()
+            latestPartialSpeechText = ""
+            consecutiveNoMatchRestarts = 0
+            speechListening = true
+            cancelScheduledSpeechRestart()
+            beginManualListenCycle(languageTag)
+            if (completeImmediately) {
+                result.success(null)
+            }
+            return
+        }
+
         val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
         speechRecognizer?.destroy()
         speechRecognizer = recognizer
-        recognizer.setRecognitionListener(object : RecognitionListener {
+        speechListening = false
+        recognizer.setRecognitionListener(
+            createSpeechRecognitionListener(languageTag, manualMode = false)
+        )
+        recognizer.startListening(buildSpeechIntent(languageTag, manualMode = false))
+    }
+
+    private fun createSpeechRecognitionListener(
+        languageTag: String,
+        manualMode: Boolean
+    ): RecognitionListener {
+        return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 Log.i("OralCancerSpeech", "ready language=$languageTag")
             }
 
             override fun onBeginningOfSpeech() {
+                consecutiveNoMatchRestarts = 0
                 Log.i("OralCancerSpeech", "beginning")
             }
 
@@ -152,47 +432,90 @@ class MainActivity : FlutterActivity() {
             }
 
             override fun onError(error: Int) {
-                val pending = pendingSpeechResult ?: return
-                pendingSpeechResult = null
-                recognizer.destroy()
-                if (speechRecognizer == recognizer) {
-                    speechRecognizer = null
+                val pending = pendingSpeechResult
+                val accumulated = accumulatedSpeechText.toString().trim()
+                if (pending != null && accumulated.isNotEmpty() &&
+                    shouldRecoverManualSpeechError(error)
+                ) {
+                    deliverSpeechSuccess(accumulated, listOf(accumulated))
+                    return
+                }
+                if (pending != null && accumulated.isEmpty() &&
+                    (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                        error == SpeechRecognizer.ERROR_CLIENT)
+                ) {
+                    deliverSpeechFailure(
+                        "SPEECH_RECOGNITION_FAILED",
+                        "No speech was recognized. Tap start, speak clearly, then tap stop.",
+                        error
+                    )
+                    return
+                }
+                if (pending == null && manualMode && speechListening) {
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH) {
+                        consecutiveNoMatchRestarts++
+                        val delayMs = min(
+                            2_000L,
+                            500L + consecutiveNoMatchRestarts * 250L
+                        )
+                        Log.d(
+                            "OralCancerSpeech",
+                            "no-match pause; next cycle in ${delayMs}ms"
+                        )
+                        scheduleManualListenCycle(languageTag, delayMs)
+                        return
+                    }
+                    if (shouldRecoverManualSpeechError(error)) {
+                        Log.d("OralCancerSpeech", "recovering error=$error")
+                        scheduleManualListenCycle(languageTag, 700L)
+                        return
+                    }
+                }
+                if (pending == null) {
+                    return
                 }
                 val message = speechErrorMessage(error)
                 Log.e("OralCancerSpeech", "error=$error message=$message")
-                pending.error("SPEECH_RECOGNITION_FAILED", message, error)
+                deliverSpeechFailure("SPEECH_RECOGNITION_FAILED", message, error)
             }
 
             override fun onResults(results: Bundle?) {
-                val pending = pendingSpeechResult ?: return
-                pendingSpeechResult = null
-                recognizer.destroy()
-                if (speechRecognizer == recognizer) {
-                    speechRecognizer = null
-                }
+                val pending = pendingSpeechResult
                 val matches = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     .orEmpty()
-                val text = matches.firstOrNull().orEmpty()
-                Log.i("OralCancerSpeech", "result chars=${text.length} alternatives=${matches.size}")
-                pending.success(
-                    mapOf(
-                        "text" to text,
-                        "alternatives" to matches
-                    )
+                if (pending == null && manualMode && speechListening) {
+                    appendSpeechResults(results)
+                    scheduleManualListenCycle(languageTag, 500L)
+                    return
+                }
+                if (pending == null) {
+                    return
+                }
+                appendSpeechResults(results)
+                val text = accumulatedSpeechText.toString().trim()
+                    .ifEmpty { matches.firstOrNull().orEmpty().trim() }
+                deliverSpeechSuccess(
+                    text,
+                    if (matches.isEmpty() && text.isNotEmpty()) listOf(text) else matches
                 )
             }
 
-            override fun onPartialResults(partialResults: Bundle?) = Unit
+            override fun onPartialResults(partialResults: Bundle?) {
+                if (!manualMode || !speechListening) {
+                    return
+                }
+                latestPartialSpeechText = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    .orEmpty()
+                    .trim()
+                emitSpeechTranscript()
+            }
+
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak patient intake details")
         }
-        recognizer.startListening(intent)
     }
 
     private fun speechErrorMessage(error: Int): String {
