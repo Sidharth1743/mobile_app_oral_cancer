@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
+import '../debug/yolo_debug_capture.dart';
+
 class YoloDetection {
   const YoloDetection({
     required this.x1,
@@ -120,6 +122,7 @@ class YoloGemmaInputPreparer {
     required List<String> framePaths,
     required Directory outputDirectory,
     int maxGemmaImages = 5,
+    String? debugSessionId,
   }) async {
     if (framePaths.isEmpty) {
       throw ArgumentError.value(framePaths, 'framePaths', 'Must not be empty.');
@@ -144,7 +147,7 @@ class YoloGemmaInputPreparer {
       final detections = await _yolo.detect(
         imagePath: framePath,
         confidenceThreshold: confidenceThreshold,
-        maxDetections: 1,
+        maxDetections: YoloDebugCapture.enabled ? 10 : 1,
       );
       final detection = detections.isEmpty ? null : detections.first;
       final source = _decodeImage(framePath);
@@ -161,14 +164,25 @@ class YoloGemmaInputPreparer {
         'selection=${detection == null ? 'fallback_full_frame' : 'yolo_crop'} '
         'detections=${detections.length} output=$outputPath',
       );
+      final selection = detection == null ? 'fallback_full_frame' : 'yolo_crop';
       selected.add(
         GemmaInputFrame(
           sourceFramePath: framePath,
           gemmaImagePath: outputPath,
-          selection: detection == null ? 'fallback_full_frame' : 'yolo_crop',
+          selection: selection,
           detection: detection,
         ),
       );
+      if (YoloDebugCapture.enabled && debugSessionId != null) {
+        await YoloDebugCapture.recordFrame(
+          sessionId: debugSessionId,
+          frameIndex: frameIndex,
+          sourceFramePath: framePath,
+          gemmaImagePath: outputPath,
+          selection: selection,
+          detections: detections,
+        );
+      }
     }
     debugPrint('[OralCancerPipeline] prepare_done selected=${selected.length}');
     return selected;

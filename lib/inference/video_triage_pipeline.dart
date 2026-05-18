@@ -85,6 +85,7 @@ class VideoTriagePipeline {
             framePaths: framePaths,
             outputDirectory: gemmaInputDir,
             maxGemmaImages: maxGemmaImages,
+            debugSessionId: visitId,
           );
     } finally {
       await _yoloPrefilter.close();
