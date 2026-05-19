@@ -33,6 +33,10 @@ String oralScreeningPromptForLanguage(String outputLanguage) {
 
 typedef VideoTriageProgress = void Function(String message);
 
+/// Called after YOLO finishes and before Gemma inference. Await user review UI.
+typedef YoloFramesPreparedCallback =
+    Future<void> Function(List<GemmaInputFrame> prepared);
+
 class VideoTriagePipeline {
   VideoTriagePipeline({
     required GemmaService gemmaService,
@@ -58,6 +62,7 @@ class VideoTriagePipeline {
     int maxGemmaImages = 5,
     String outputLanguage = 'English',
     VideoTriageProgress? onProgress,
+    YoloFramesPreparedCallback? onYoloFramesPrepared,
   }) async {
     if (framePaths.isEmpty) {
       throw ArgumentError.value(framePaths, 'framePaths', 'Must not be empty.');
@@ -89,6 +94,11 @@ class VideoTriagePipeline {
           );
     } finally {
       await _yoloPrefilter.close();
+    }
+
+    onProgress?.call('YOLO prefilter complete — review frames');
+    if (onYoloFramesPrepared != null && prepared.isNotEmpty) {
+      await onYoloFramesPrepared(prepared);
     }
 
     final hasYoloCrop = prepared.any((input) => input.selection == 'yolo_crop');

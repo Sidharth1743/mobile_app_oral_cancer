@@ -1,12 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../inference/yolo_frame_annotation.dart';
 import '../inference/yolo_prefilter.dart';
 
 /// Saves YOLO boxes, annotated frames, and Gemma crops in debug builds (adb pull to PC).
@@ -61,25 +60,14 @@ class YoloDebugCapture {
     await frameDir.create(recursive: true);
 
     try {
-      final sourceBytes = await File(sourceFramePath).readAsBytes();
-      final decoded = img.decodeImage(sourceBytes);
-      if (decoded == null) {
-        throw FormatException('Could not decode frame', sourceFramePath);
-      }
+      await File(p.join(frameDir.path, 'source.jpg')).writeAsBytes(
+        await File(sourceFramePath).readAsBytes(),
+      );
 
-      await File(p.join(frameDir.path, 'source.jpg')).writeAsBytes(sourceBytes);
-
-      final annotated = img.Image.from(decoded);
-      for (var i = 0; i < detections.length; i++) {
-        _drawBox(
-          annotated,
-          detections[i],
-          color: i == 0 ? img.ColorRgb8(0, 220, 80) : img.ColorRgb8(255, 180, 0),
-          label: i == 0 ? '#1' : '#${i + 1}',
-        );
-      }
-      await File(p.join(frameDir.path, 'annotated_boxes.jpg')).writeAsBytes(
-        img.encodeJpg(annotated, quality: 92),
+      await writeAnnotatedFramePreview(
+        sourceFramePath: sourceFramePath,
+        outputPath: p.join(frameDir.path, 'annotated_boxes.jpg'),
+        detections: detections,
       );
 
       await File(
@@ -121,35 +109,6 @@ class YoloDebugCapture {
     } catch (error, stack) {
       debugPrint('[YoloDebugCapture] record error: $error\n$stack');
     }
-  }
-
-  static void _drawBox(
-    img.Image image,
-    YoloDetection detection, {
-    required img.Color color,
-    required String label,
-  }) {
-    final x1 = detection.x1.round().clamp(0, image.width - 1);
-    final y1 = detection.y1.round().clamp(0, image.height - 1);
-    final x2 = detection.x2.round().clamp(0, image.width - 1);
-    final y2 = detection.y2.round().clamp(0, image.height - 1);
-    img.drawRect(
-      image,
-      x1: x1,
-      y1: y1,
-      x2: x2,
-      y2: y2,
-      color: color,
-      thickness: 3,
-    );
-    img.drawString(
-      image,
-      label,
-      font: img.arial14,
-      x: x1,
-      y: math.max(0, y1 - 16),
-      color: color,
-    );
   }
 
   static Future<void> _appendSessionManifest(

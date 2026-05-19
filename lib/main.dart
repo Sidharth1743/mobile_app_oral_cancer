@@ -35,6 +35,7 @@ import 'ui/app_theme.dart';
 import 'ui/components/status_badge.dart';
 import 'ui/screens/consent_screen.dart';
 import 'ui/screens/local_translation_screen.dart';
+import 'ui/screens/yolo_frame_review_screen.dart';
 import 'ui/screens/progress_screen.dart';
 import 'ui/screens/treatment_tracking_screen.dart';
 
@@ -1408,6 +1409,19 @@ class _CaptureScreenState extends State<CaptureScreen> {
           if (mounted) {
             setState(() => _progress = message);
           }
+        },
+        onYoloFramesPrepared: (prepared) async {
+          if (!mounted) {
+            return;
+          }
+          setState(
+            () => _progress = 'Review YOLO frames, then continue to Gemma',
+          );
+          await Navigator.of(context).push<bool>(
+            MaterialPageRoute(
+              builder: (_) => YoloFrameReviewScreen(frames: prepared),
+            ),
+          );
         },
       );
       debugPrint(

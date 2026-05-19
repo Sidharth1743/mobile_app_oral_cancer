@@ -7,6 +7,7 @@ import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
 import '../debug/yolo_debug_capture.dart';
+import 'yolo_frame_annotation.dart';
 
 class YoloDetection {
   const YoloDetection({
@@ -94,14 +95,18 @@ class YoloPrefilter {
 class GemmaInputFrame {
   const GemmaInputFrame({
     required this.sourceFramePath,
+    required this.annotatedFramePath,
     required this.gemmaImagePath,
     required this.selection,
+    required this.detections,
     this.detection,
   });
 
   final String sourceFramePath;
+  final String annotatedFramePath;
   final String gemmaImagePath;
   final String selection;
+  final List<YoloDetection> detections;
   final YoloDetection? detection;
 }
 
@@ -147,9 +152,18 @@ class YoloGemmaInputPreparer {
       final detections = await _yolo.detect(
         imagePath: framePath,
         confidenceThreshold: confidenceThreshold,
-        maxDetections: YoloDebugCapture.enabled ? 10 : 1,
+        maxDetections: 10,
       );
       final detection = detections.isEmpty ? null : detections.first;
+      final annotatedPath = p.join(
+        outputDirectory.path,
+        'frame_${frameIndex.toString().padLeft(3, '0')}_annotated.jpg',
+      );
+      await writeAnnotatedFramePreview(
+        sourceFramePath: framePath,
+        outputPath: annotatedPath,
+        detections: detections,
+      );
       final source = _decodeImage(framePath);
       final crop = detection == null
           ? source
@@ -168,8 +182,10 @@ class YoloGemmaInputPreparer {
       selected.add(
         GemmaInputFrame(
           sourceFramePath: framePath,
+          annotatedFramePath: annotatedPath,
           gemmaImagePath: outputPath,
           selection: selection,
+          detections: detections,
           detection: detection,
         ),
       );
