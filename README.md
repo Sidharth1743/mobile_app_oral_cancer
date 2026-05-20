@@ -39,9 +39,9 @@ Models are **not bundled in the APK**. Download or build weights, then push once
 
 | Artifact | Hugging Face | Use |
 |----------|--------------|-----|
-| **LiteRT (on-device)** | [Sidharth1743/gemma-4-E2B-it-litertlm](https://huggingface.co/Sidharth1743/gemma-4-E2B-it-litertlm) | Copy as `model/model.litertlm` → push to phone |
+| **LiteRT (on-device)** | https://huggingface.co/sach3v/Gemma-4-e2b-custom-oral_cancer | Copy as `model/model.litertlm` → push to phone |
 | **QLoRA adapter (training)** | [Sidharth1743/orcal-cancer-gemma-4-e2b-finetuned](https://huggingface.co/Sidharth1743/orcal-cancer-gemma-4-e2b-finetuned) | Fine-tuned on `unsloth/gemma-4-E2B-it`; merge & convert to LiteRT for deployment |
-| **YOLO** | — | `yolo11n_lesion_best_640_int8.tflite` (project-trained; see [RELEASE_NOTES.md](RELEASE_NOTES.md)) |
+| **YOLO** | https://huggingface.co/sach3v/Gemma-4-e2b-custom-oral_cancer/blob/main/yolo11n_lesion_best_640_int8.tflite | `yolo11n_lesion_best_640_int8.tflite` (project-trained; see [RELEASE_NOTES.md](RELEASE_NOTES.md)) |
 
 The adapter targets conservative screening (`low_risk_or_variation`, `refer_for_clinical_review`) with structured JSON output. For Android, use the **LiteRT** bundle above (or export your own via `scripts/convert_unsloth_lora_to_litert.py`).
 
